@@ -109,8 +109,56 @@ export class Sound {
         case 'levelup':
           [392, 523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'square', 0.18, undefined, i * 0.08));
           break;
-        case 'surge':
-          this.tone(150, 0.3, 'sawtooth', 0.12, 600);
+        case 'rot':
+          this.tone(180, 0.25, 'sawtooth', 0.15, 90);
+          break;
+        case 'coil':
+          [523, 659, 784, 1047, 1319].slice(0, 2 + Math.min(3, e.captured)).forEach((f, i) => this.tone(f, 0.14, 'triangle', 0.2, undefined, i * 0.05));
+          break;
+        case 'defuse':
+          this.tone(1200, 0.08, 'square', 0.12, 400);
+          break;
+        case 'ability':
+          if (e.cls === 'viper') this.tone(300, 0.15, 'sawtooth', 0.15, 1400);
+          else if (e.cls === 'cobra') this.tone(900, 0.12, 'square', 0.14, 200);
+          else if (e.cls === 'python') this.tone(120, 0.25, 'triangle', 0.18, 90);
+          else this.tone(150, 0.3, 'sawtooth', 0.12, 600);
+          break;
+        case 'spitHit':
+          this.noise(0.15, 0.2, 4000, 800);
+          break;
+        case 'stun':
+          this.tone(2000, 0.04, 'square', 0.1);
+          this.tone(1600, 0.04, 'square', 0.1, undefined, 0.05);
+          this.tone(2200, 0.04, 'square', 0.1, undefined, 0.1);
+          break;
+        case 'armour':
+          this.tone(400, 0.3, 'triangle', 0.25, 800);
+          this.noise(0.2, 0.15, 5000, 1000);
+          break;
+        case 'rewind':
+          this.tone(1200, 0.45, 'sine', 0.2, 200);
+          break;
+        case 'bossHit':
+          this.noise(0.3, 0.3, 2000, 100);
+          this.tone(110, 0.3, 'square', 0.2, 55);
+          break;
+        case 'bossDie':
+          this.noise(0.9, 0.35, 3000, 80);
+          [262, 330, 392, 523, 659, 784].forEach((f, i) => this.tone(f, 0.2, 'square', 0.16, undefined, 0.2 + i * 0.07));
+          break;
+        case 'shield':
+          this.tone(e.up ? 300 : 900, 0.25, 'sine', 0.2, e.up ? 900 : 300);
+          break;
+        case 'beat':
+          if (e.strong) this.tone(110, 0.12, 'sine', 0.35, 45);
+          else this.noise(0.04, 0.08, 8000, 6000);
+          break;
+        case 'onbeat':
+          this.tone(880 + Math.min(e.streak, 12) * 40, 0.05, 'triangle', 0.1);
+          break;
+        case 'offbeat':
+          this.tone(160, 0.1, 'square', 0.08);
           break;
         case 'die':
           this.noise(0.7, 0.4);

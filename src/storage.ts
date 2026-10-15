@@ -1,7 +1,9 @@
-import type { ModeId } from './game/types';
+import type { LevelData } from './game/levels';
+import type { ModeId, SnakeClass } from './game/types';
 
 export type PaletteId = 'neon' | 'safe';
 export type TouchStyle = 'swipe' | 'dpad';
+export type SkinId = 'classic' | 'ember' | 'ghost' | 'gold';
 
 export interface Settings {
   palette: PaletteId;
@@ -9,11 +11,28 @@ export interface Settings {
   sound: boolean;
   music: boolean;
   touch: TouchStyle;
+  cls: SnakeClass;
+  skin: SkinId;
+  name: string;
+}
+
+export interface LocalScore {
+  name: string;
+  score: number;
+  level: number;
+  cls: SnakeClass;
+  date: string;
 }
 
 export interface SaveData {
   best: Partial<Record<ModeId, number>>;
   daily: Record<string, number>;
+  /** Best Daily run per date, encoded ghost trail. */
+  ghosts: Record<string, string>;
+  achievements: string[];
+  levels: LevelData[];
+  /** Local top-10 per board key ("arcade", "daily:2026-10-15", ...). */
+  boards: Record<string, LocalScore[]>;
   settings: Settings;
 }
 
@@ -29,7 +48,20 @@ function defaults(): SaveData {
   return {
     best: {},
     daily: {},
-    settings: { palette: 'neon', reducedMotion: reduced, sound: true, music: true, touch: 'swipe' },
+    ghosts: {},
+    achievements: [],
+    levels: [],
+    boards: {},
+    settings: {
+      palette: 'neon',
+      reducedMotion: reduced,
+      sound: true,
+      music: true,
+      touch: 'swipe',
+      cls: 'racer',
+      skin: 'classic',
+      name: '',
+    },
   };
 }
 
@@ -42,6 +74,10 @@ export function load(): SaveData {
     return {
       best: { ...base.best, ...parsed.best },
       daily: { ...base.daily, ...parsed.daily },
+      ghosts: { ...parsed.ghosts },
+      achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
+      levels: Array.isArray(parsed.levels) ? parsed.levels : [],
+      boards: { ...parsed.boards },
       settings: { ...base.settings, ...parsed.settings },
     };
   } catch {
@@ -49,15 +85,34 @@ export function load(): SaveData {
   }
 }
 
+function lastKeys<T>(rec: Record<string, T>, n: number): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const k of Object.keys(rec).sort().slice(-n)) out[k] = rec[k];
+  return out;
+}
+
 export function save(data: SaveData) {
-  // Only keep the most recent month of daily scores.
-  const keys = Object.keys(data.daily).sort().slice(-31);
-  const daily: Record<string, number> = {};
-  for (const k of keys) daily[k] = data.daily[k];
-  data.daily = daily;
+  // Keep daily data bounded: a month of scores, a week of ghosts and daily boards.
+  data.daily = lastKeys(data.daily, 31);
+  data.ghosts = lastKeys(data.ghosts, 7);
+  const dailyBoards = Object.keys(data.boards).filter((k) => k.startsWith('daily:')).sort();
+  for (const k of dailyBoards.slice(0, -7)) delete data.boards[k];
   try {
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
-    /* storage blocked or full; the game still works without it */
+    // Storage blocked or full: drop ghosts (the largest item) and retry once.
+    try {
+      data.ghosts = {};
+      localStorage.setItem(KEY, JSON.stringify(data));
+    } catch {
+      /* the game still works without saving */
+    }
   }
+}
+
+/** Insert into a local top-10; returns the 1-based rank, or 0 if it didn't place. */
+export function addLocalScore(data: SaveData, board: string, entry: LocalScore): number {
+  const list = [...(data.boards[board] ?? []), entry].sort((a, b) => b.score - a.score).slice(0, 10);
+  data.boards[board] = list;
+  return list.indexOf(entry) + 1;
 }

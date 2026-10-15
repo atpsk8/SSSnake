@@ -14,7 +14,7 @@ function make(mode: ModeId = 'classic', seed = 1) {
 }
 
 function put(g: Game, kind: PickupKind, pos: Vec) {
-  g.pickups.push({ id: 900 + g.pickups.length, kind, pos, ttl: Infinity, maxTtl: Infinity });
+  g.pickups.push({ id: 900 + g.pickups.length, kind, pos, ttl: Infinity, maxTtl: Infinity, age: 0 });
 }
 
 const line = (x0: number, y: number, len: number): Vec[] =>
@@ -155,9 +155,9 @@ describe('shed', () => {
 
   it('shed walls kill on contact and expire later', () => {
     const g = make('arcade');
-    g.shedWalls = [{ pos: { x: 6, y: 12 }, ttl: SHED_WALL_MS, maxTtl: SHED_WALL_MS }];
+    g.shedWalls = [{ pos: { x: 6, y: 12 }, ttl: SHED_WALL_MS, maxTtl: SHED_WALL_MS, owner: 0 }];
     const g2 = make('arcade');
-    g2.shedWalls = [{ pos: { x: 20, y: 20 }, ttl: 50, maxTtl: SHED_WALL_MS }];
+    g2.shedWalls = [{ pos: { x: 20, y: 20 }, ttl: 50, maxTtl: SHED_WALL_MS, owner: 0 }];
     g.step();
     expect(g.deathCause).toBe('shed');
     g2.update(60);
@@ -166,7 +166,7 @@ describe('shed', () => {
 
   it('zen crumbles shed walls instead of dying', () => {
     const g = make('zen');
-    g.shedWalls = [{ pos: { x: 6, y: 12 }, ttl: SHED_WALL_MS, maxTtl: SHED_WALL_MS }];
+    g.shedWalls = [{ pos: { x: 6, y: 12 }, ttl: SHED_WALL_MS, maxTtl: SHED_WALL_MS, owner: 0 }];
     g.step();
     expect(g.status).toBe('playing');
     expect(g.shedWalls).toHaveLength(0);
@@ -241,7 +241,7 @@ describe('hazards and arenas', () => {
 
   it('portals teleport the head to the twin', () => {
     const g = make('arcade');
-    (g as unknown as { loadLevel(l: number, b: boolean): void }).loadLevel(3, false);
+    g.loadLevel(3, false);
     g.mines = [];
     g.rival = null;
     g.rivalRespawn = Infinity;
@@ -251,21 +251,26 @@ describe('hazards and arenas', () => {
     expect(g.snake[0]).toEqual({ x: 20, y: 20 });
   });
 
-  it('levels up after enough food, banks length and changes arena', () => {
+  it('clearing a level opens a draft, then loads the next arena', () => {
     const g = make('arcade');
     g.levelFoods = g.foodsForLevel - 1;
     put(g, 'food', { x: 6, y: 12 });
     g.step();
+    expect(g.status).toBe('draft');
+    expect(g.draftOptions).toHaveLength(3);
+    expect(g.score).toBeGreaterThan(10);
+    const pick = g.draftOptions![0];
+    g.chooseMutation(0);
+    expect(g.mutations).toContain(pick);
     expect(g.level).toBe(2);
     expect(g.arena.id).toBe('wrap');
     expect(g.snake).toHaveLength(4);
-    expect(g.score).toBeGreaterThan(10);
     expect(g.banner).not.toBeNull();
   });
 
   it('collapse closes the border ring over time', () => {
     const g = make('arcade');
-    (g as unknown as { loadLevel(l: number, b: boolean): void }).loadLevel(5, false);
+    g.loadLevel(6, false);
     expect(g.arena.id).toBe('collapse');
     g.collapseTimer = 1;
     g.update(16);
@@ -275,7 +280,7 @@ describe('hazards and arenas', () => {
 
   it('maze shifts after a few foods and never lands on the snake', () => {
     const g = make('arcade');
-    (g as unknown as { loadLevel(l: number, b: boolean): void }).loadLevel(4, false);
+    g.loadLevel(4, false);
     g.mines = [];
     g.rivalRespawn = Infinity;
     expect(g.arena.id).toBe('maze');
@@ -302,6 +307,7 @@ describe('hazards and arenas', () => {
       prevBody: [],
       dir: 'left',
       grow: 0,
+      stunned: 0,
     };
     g.step();
     expect(g.status).toBe('playing');

@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { Game } from './engine';
-import { DIRS, OPPOSITE, W, add, eq, idx, inBounds, manhattan, wrapPos, type Dir, type ModeId, type Vec } from './types';
+import { Game, type Player } from './engine';
+import { emptyLevel, type LevelData } from './levels';
+import { DIRS, DIR_LIST, OPPOSITE, W, add, eq, idx, inBounds, manhattan, wrapPos, type Dir, type ModeId, type SnakeClass, type Vec } from './types';
 
-/** Greedy bot: avoid anything deadly, drift toward food, shed and surge sometimes. */
-function botMove(g: Game, rnd: () => number) {
-  const head = g.snake[0];
-  const food = g.pickups.find((p) => p.kind === 'food')?.pos ?? head;
-  const blocked = (p: Vec) =>
-    g.solid[idx(p)] === 1 ||
-    g.snake.some((s, i) => i < g.snake.length - 1 && eq(s, p)) ||
-    g.shedWalls.some((w) => eq(w.pos, p)) ||
-    g.mines.some((m) => eq(m.pos, p)) ||
-    (g.rival?.body.some((s) => eq(s, p)) ?? false);
-  const options = (Object.keys(DIRS) as Dir[])
-    .filter((d) => d !== OPPOSITE[g.dir])
+/** Greedy bot: avoid anything deadly, drift toward food, use abilities sometimes. */
+function botMove(g: Game, p: Player, rnd: () => number) {
+  if (!p.alive) return;
+  const head = p.body[0];
+  const food = g.pickups.find((q) => q.kind === 'food')?.pos ?? head;
+  const blocked = (c: Vec) =>
+    g.solid[idx(c)] === 1 ||
+    g.bossAt(c) ||
+    g.players.some((o) => o.alive && o.body.some((s, i) => (o !== p || i < o.body.length - 1) && eq(s, c))) ||
+    g.shedWalls.some((w) => eq(w.pos, c)) ||
+    g.mines.some((m) => eq(m.pos, c)) ||
+    (g.rival?.body.some((s) => eq(s, c)) ?? false);
+  const options = DIR_LIST.filter((d) => d !== OPPOSITE[p.dir])
     .map((d) => {
       let n = add(head, DIRS[d]);
       if (!inBounds(n)) {
@@ -26,9 +28,9 @@ function botMove(g: Game, rnd: () => number) {
     })
     .filter((o): o is { d: Dir; score: number } => o !== null)
     .sort((a, b) => a.score - b.score);
-  if (options.length) g.turn(options[0].d);
-  if (rnd() < 0.01) g.shed();
-  g.setSurge(rnd() < 0.2);
+  if (options.length) g.turn(options[0].d, p.id);
+  if (rnd() < 0.01) g.shed(p.id);
+  g.setHeld(p.id, rnd() < 0.15);
 }
 
 function mulberry(seed: number) {
@@ -42,44 +44,64 @@ function mulberry(seed: number) {
   };
 }
 
-const hasLevels = (m: ModeId) => m === 'arcade' || m === 'daily';
+const CLASSES: SnakeClass[] = ['racer', 'viper', 'cobra', 'python'];
+const KNOWN_CAUSES = ['wall', 'self', 'shed', 'mine', 'rival', 'boss', 'player'];
+
+const CUSTOM: LevelData = {
+  ...emptyLevel(),
+  walls: [100, 101, 102, 300, 324, 348],
+  wells: [200],
+  arrows: [[400, 'up']],
+  modifiers: ['ripening'],
+  rival: true,
+  goal: 15,
+};
 
 describe('soak', () => {
-  const modes: ModeId[] = ['classic', 'arcade', 'daily', 'zen'];
+  const modes: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'versus', 'custom'];
   for (const mode of modes) {
     it(`${mode}: bot runs without breaking invariants`, () => {
       let maxLevel = 1;
-      let totalSteps = 0;
-      const causes: Record<string, number> = {};
+      let totalFrames = 0;
+      const causes = new Set<string>();
       for (let seed = 1; seed <= 25; seed++) {
-        const g = new Game({ mode, seed });
-        // Start some runs deeper so rivals, mazes and collapse get exercised too.
-        if (g.mode.levels) (g as unknown as { loadLevel(l: number, b: boolean): void }).loadLevel(1 + (seed % 7), false);
+        const g = new Game({
+          mode,
+          seed,
+          classes: [CLASSES[seed % 4], CLASSES[(seed + 1) % 4]],
+          level: mode === 'custom' ? CUSTOM : undefined,
+          record: mode === 'daily',
+        });
+        // Start some runs deeper so bosses, twists and late arenas get exercised.
+        if (g.mode.levels) g.loadLevel(1 + (seed % 12), false);
         const rnd = mulberry(seed * 7919);
-        for (let frame = 0; frame < (mode === 'zen' ? 2500 : 6000) && g.status === 'playing'; frame++) {
-          botMove(g, rnd);
+        for (let frame = 0; frame < (mode === 'zen' ? 2500 : 5000) && g.status !== 'over'; frame++) {
+          if (g.status === 'draft') g.chooseMutation(Math.floor(rnd() * 3));
+          for (const p of g.players) botMove(g, p, rnd);
           g.update(16);
           g.drainEvents();
-          totalSteps++;
-          // Invariants
-          expect(g.snake.length).toBeGreaterThanOrEqual(2);
-          for (const s of g.snake) expect(inBounds(s)).toBe(true);
-          expect(g.pickups.filter((p) => p.kind === 'food').length).toBeLessThanOrEqual(1);
-          for (const p of g.pickups) {
-            expect(inBounds(p.pos)).toBe(true);
-            expect(g.solid[p.pos.y * W + p.pos.x]).toBe(0);
+          totalFrames++;
+          for (const p of g.players) {
+            if (!p.alive) continue;
+            expect(p.body.length).toBeGreaterThanOrEqual(2);
+            for (const s of p.body) expect(inBounds(s)).toBe(true);
+            expect(p.meter).toBeGreaterThanOrEqual(0);
+            expect(p.meter).toBeLessThanOrEqual(1);
+            expect(Number.isFinite(p.score)).toBe(true);
           }
-          expect(Number.isFinite(g.score)).toBe(true);
-          expect(g.surge).toBeGreaterThanOrEqual(0);
-          expect(g.surge).toBeLessThanOrEqual(1);
+          expect(g.pickups.filter((q) => q.kind === 'food').length).toBeLessThanOrEqual(1);
+          for (const q of g.pickups) {
+            expect(inBounds(q.pos)).toBe(true);
+            expect(g.solid[q.pos.y * W + q.pos.x]).toBe(0);
+          }
         }
         maxLevel = Math.max(maxLevel, g.level);
-        if (g.deathCause) causes[g.deathCause] = (causes[g.deathCause] ?? 0) + 1;
+        if (g.deathCause) causes.add(g.deathCause);
         if (mode === 'zen') expect(g.status).toBe('playing');
       }
-      expect(totalSteps).toBeGreaterThan(1000);
-      if (hasLevels(mode)) expect(maxLevel).toBeGreaterThanOrEqual(7);
-      expect(Object.keys(causes).every((c) => ['wall', 'self', 'shed', 'mine', 'rival'].includes(c))).toBe(true);
-    }, 60000);
+      expect(totalFrames).toBeGreaterThan(1000);
+      if (mode === 'arcade' || mode === 'daily') expect(maxLevel).toBeGreaterThanOrEqual(10);
+      for (const c of causes) expect(KNOWN_CAUSES).toContain(c);
+    }, 120000);
   }
 });

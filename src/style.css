@@ -180,14 +180,6 @@ kbd {
   transition: width 0.1s linear;
 }
 
-#surgeMeter .bar > div {
-  background: var(--gold);
-}
-
-#surgeMeter.active span {
-  color: var(--gold);
-}
-
 #shedMeter .bar > div {
   background: rgba(255, 255, 255, 0.3);
 }
@@ -203,15 +195,7 @@ kbd {
 body:not(.in-game) .hud,
 body:not(.in-game) .meters,
 body:not(.in-game) .controls {
-  visibility: hidden;
-}
-
-body.no-abilities #surgeMeter,
-body.no-abilities #shedMeter,
-body.no-abilities #btnShed,
-body.no-abilities #btnSurge,
-body.no-levels #levelMeter {
-  display: none;
+  display: none !important;
 }
 
 /* ---------------------------------------------------------------- stage */
@@ -622,10 +606,6 @@ body[data-screen='play'] #stage {
   box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-#btnSurge {
-  color: var(--gold);
-}
-
 .ctl.pressed,
 .dpad button.pressed {
   transform: scale(0.94);
@@ -677,7 +657,7 @@ body:has(.dpad:not(.hidden)) .controls {
 body:has(.dpad:not(.hidden)) #btnShed {
   grid-area: shed;
 }
-body:has(.dpad:not(.hidden)) #btnSurge {
+body:has(.dpad:not(.hidden)) #btnAbility {
   grid-area: surge;
 }
 body:has(.dpad:not(.hidden)) #btnPause {
@@ -693,7 +673,6 @@ body:has(.dpad:not(.hidden)) .ctl:not(.small) {
 }
 
 @media (max-width: 520px) {
-  .modes,
   .help-grid {
     grid-template-columns: 1fr;
   }
