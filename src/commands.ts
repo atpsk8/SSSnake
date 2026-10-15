@@ -54,6 +54,10 @@ export function buildCommands(app: AppCtx): Command[] {
         s()[key] = b;
         break;
       }
+      case 'crt':
+        if (!['soft', 'full', 'off'].includes(v)) return t.print('usage: set crt soft|full|off', 'err');
+        s().crt = v as 'soft' | 'full' | 'off';
+        break;
       case 'motion':
         if (!['full', 'reduced'].includes(v)) return t.print('usage: set motion full|reduced', 'err');
         s().reducedMotion = v === 'reduced';
@@ -75,6 +79,7 @@ export function buildCommands(app: AppCtx): Command[] {
     t.table([
       ['name', st.name || '(not set)', 'set name <name>'],
       ['color', st.palette, 'set color green|amber|white'],
+      ['crt', st.crt, 'set crt soft|full|off  (scanlines, glow, flicker)'],
       ['sound', st.sound ? 'on' : 'off', 'set sound on|off'],
       ['music', st.music ? 'on' : 'off', 'set music on|off'],
       ['motion', st.reducedMotion ? 'reduced' : 'full', 'set motion full|reduced'],
@@ -100,14 +105,14 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('  {play} [mode]      arcade (default), classic, daily, zen, rhythm');
         t.print('  {versus}           two players on this device');
         t.print('  {invite}           host an online match and get a code');
-        t.print('  join <code>        join a friend\'s online match');
+        t.print('  join <code>      join a friend\'s online match');
         t.print('  {snake} [type]     list or pick your snake type');
         t.print('  {editor}           build levels;  {levels} to list saved ones');
         t.print('PROFILE', 'title');
         t.print('  {scores} [board]   leaderboards: arcade, daily, classic, rhythm');
         t.print('  {trophies}         achievements and unlocks');
         t.print('  {skin} [name]      snake skins');
-        t.print('  {set} [key value]  settings (name, color, sound, music, motion, touch)');
+        t.print('  {set} [key value]  settings (name, color, crt, sound, music, motion, touch)');
         t.print('SYSTEM', 'title');
         t.print('  {controls}  {clear}  {about}', 'out');
         t.print('tip: Tab completes, Up/Down recalls history, Esc cancels.', 'dim');

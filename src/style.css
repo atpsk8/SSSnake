@@ -6,34 +6,53 @@
 
 :root,
 :root[data-palette='green'] {
-  --bg: #020a04;
-  --fg: #33ff66;
-  --bright: #c8ffd4;
-  --dim: #1f9940;
-  --faint: #0b3a18;
-  --alt: #ffb000;
-  --glow: rgba(51, 255, 102, 0.55);
+  --bg: #0c1511;
+  --fg: #86d9a0;
+  --bright: #cdeed6;
+  --dim: #4f8a62;
+  --faint: #1b2b21;
+  --alt: #e3b766;
+  --glow: rgba(134, 217, 160, 0.28);
   color-scheme: dark;
 }
 
 :root[data-palette='amber'] {
-  --bg: #0a0600;
-  --fg: #ffb000;
-  --bright: #ffe2a0;
-  --dim: #a06e00;
-  --faint: #3d2a00;
-  --alt: #33ff66;
-  --glow: rgba(255, 176, 0, 0.5);
+  --bg: #15110b;
+  --fg: #e2b468;
+  --bright: #f4dcb0;
+  --dim: #8e7140;
+  --faint: #2d2416;
+  --alt: #86d9a0;
+  --glow: rgba(226, 180, 104, 0.26);
 }
 
 :root[data-palette='white'] {
-  --bg: #05070a;
-  --fg: #d8e6ff;
-  --bright: #ffffff;
-  --dim: #7f8aa0;
-  --faint: #1f2533;
-  --alt: #ffb000;
-  --glow: rgba(216, 230, 255, 0.4);
+  --bg: #11141a;
+  --fg: #c9d2df;
+  --bright: #eef2f7;
+  --dim: #7a8494;
+  --faint: #232a35;
+  --alt: #e3b766;
+  --glow: rgba(201, 210, 223, 0.2);
+}
+
+/* CRT intensity: soft (default), full, off. */
+:root {
+  --text-glow: 0 0 3px var(--glow);
+  --scan: 0.07;
+  --vignette: 0.3;
+}
+
+:root[data-crt='full'] {
+  --text-glow: 0 0 6px var(--glow), 0 0 1px var(--glow);
+  --scan: 0.2;
+  --vignette: 0.5;
+}
+
+:root[data-crt='off'] {
+  --text-glow: none;
+  --scan: 0;
+  --vignette: 0;
 }
 
 * {
@@ -55,7 +74,7 @@ body {
 
 body {
   background: radial-gradient(ellipse at center, color-mix(in srgb, var(--faint) 55%, var(--bg)) 0%, var(--bg) 75%) fixed;
-  text-shadow: 0 0 6px var(--glow);
+  text-shadow: var(--text-glow);
 }
 
 ::selection {
@@ -72,6 +91,9 @@ body {
   padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
     max(16px, env(safe-area-inset-left));
   gap: 6px;
+}
+
+:root[data-crt='full'] #app {
   animation: flicker 6s infinite steps(1);
 }
 
@@ -82,8 +104,12 @@ body {
   pointer-events: none;
   z-index: 20;
   background:
-    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, 0.22) 3px),
-    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.55) 100%);
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, var(--scan)) 3px),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 62%, rgba(0, 0, 0, var(--vignette)) 100%);
+}
+
+:root[data-crt='off'] .crt {
+  display: none;
 }
 
 @keyframes flicker {
@@ -169,7 +195,6 @@ kbd {
 
 .hud .hot {
   color: var(--bright);
-  animation: blink 0.8s steps(1) infinite;
 }
 
 .hud .right {
@@ -275,7 +300,6 @@ body.no-levels #levelMeter {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
-  filter: drop-shadow(0 0 4px var(--glow));
 }
 
 body.editing #board {
@@ -343,7 +367,7 @@ body.editing #board {
   border: 1px solid var(--fg);
   box-shadow:
     0 0 0 1px var(--bg),
-    0 0 18px var(--glow);
+    0 0 10px var(--glow);
 }
 
 .win.small {
@@ -439,7 +463,6 @@ body.editing #board {
   text-shadow: none;
   padding: 1px 6px;
   vertical-align: middle;
-  animation: blink 0.8s steps(1) 4;
 }
 
 .summary {
@@ -869,7 +892,7 @@ body.editing .editor-bar {
   padding: 6px 10px;
   background: var(--bg);
   border: 1px solid var(--fg);
-  box-shadow: 0 0 14px var(--glow);
+  box-shadow: 0 0 8px var(--glow);
   display: flex;
   flex-direction: column;
   font-size: 12px;

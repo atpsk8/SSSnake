@@ -109,13 +109,21 @@
                 </select>
               </label>
               <label class="setting">
+                <span>crt effects</span>
+                <select id="optCrt">
+                  <option value="soft">soft</option>
+                  <option value="full">full</option>
+                  <option value="off">off</option>
+                </select>
+              </label>
+              <label class="setting">
                 <span>touch</span>
                 <select id="optTouch">
                   <option value="swipe">swipe</option>
                   <option value="dpad">swipe + d-pad</option>
                 </select>
               </label>
-              <label class="setting check"><input type="checkbox" id="optMotion" /> <span>reduced motion (no flicker, shake or flashes)</span></label>
+              <label class="setting check"><input type="checkbox" id="optMotion" /> <span>reduced motion (no shake or flashes)</span></label>
               <label class="setting check"><input type="checkbox" id="optSound" /> <span>sound effects</span></label>
               <label class="setting check"><input type="checkbox" id="optMusic" /> <span>zen music</span></label>
               <button class="primary" id="settingsDone">[ done ]</button>

@@ -109,6 +109,7 @@ function applySettings() {
   sound.enabled = s.sound;
   sound.musicEnabled = s.music;
   document.documentElement.dataset.palette = s.palette;
+  document.documentElement.dataset.crt = s.crt;
   document.body.classList.toggle('reduced-motion', s.reducedMotion);
   $('dpad').classList.toggle('hidden', s.touch !== 'dpad');
   if (game?.mode.zen && screen === 'play' && s.music) sound.startMusic();
@@ -119,6 +120,7 @@ function applySettings() {
 
 function syncSettingsForm() {
   $<HTMLSelectElement>('optPalette').value = data.settings.palette;
+  $<HTMLSelectElement>('optCrt').value = data.settings.crt;
   $<HTMLSelectElement>('optTouch').value = data.settings.touch;
   $<HTMLInputElement>('optMotion').checked = data.settings.reducedMotion;
   $<HTMLInputElement>('optSound').checked = data.settings.sound;
@@ -131,6 +133,7 @@ function bindSettings() {
     data.settings = {
       ...data.settings,
       palette: $<HTMLSelectElement>('optPalette').value as SaveData['settings']['palette'],
+      crt: $<HTMLSelectElement>('optCrt').value as SaveData['settings']['crt'],
       touch: $<HTMLSelectElement>('optTouch').value as SaveData['settings']['touch'],
       reducedMotion: $<HTMLInputElement>('optMotion').checked,
       sound: $<HTMLInputElement>('optSound').checked,
@@ -140,7 +143,7 @@ function bindSettings() {
     save(data);
     applySettings();
   };
-  for (const id of ['optPalette', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
+  for (const id of ['optPalette', 'optCrt', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
   $('settingsDone').addEventListener('click', () => show(settingsReturn));
 }
 

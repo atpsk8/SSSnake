@@ -4,9 +4,12 @@ import type { ModeId, SnakeClass } from './game/types';
 export type PaletteId = 'green' | 'amber' | 'white';
 export type TouchStyle = 'swipe' | 'dpad';
 export type SkinId = 'classic' | 'ember' | 'ghost' | 'gold';
+/** How strong the CRT effects are: scanlines, glow, flicker. */
+export type CrtLevel = 'soft' | 'full' | 'off';
 
 export interface Settings {
   palette: PaletteId;
+  crt: CrtLevel;
   reducedMotion: boolean;
   sound: boolean;
   music: boolean;
@@ -54,6 +57,7 @@ function defaults(): SaveData {
     boards: {},
     settings: {
       palette: 'green',
+      crt: 'soft',
       reducedMotion: reduced,
       sound: true,
       music: true,
@@ -88,6 +92,7 @@ export function load(): SaveData {
 /** Older saves used 'neon' / 'safe' colour schemes. */
 function migrate(s: Settings): Settings {
   if (!['green', 'amber', 'white'].includes(s.palette)) s.palette = 'green';
+  if (!['soft', 'full', 'off'].includes(s.crt)) s.crt = 'soft';
   return s;
 }
 

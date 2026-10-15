@@ -1,6 +1,6 @@
 # SSSnake
 
-**Slither. Shed. Surge.** A terminal remix of Snake: green CRT phosphor, a working command line as the menu, and online versus by invite code. Underneath are coils, mutations, bosses, arena twists, four snake types, rhythm mode, a level editor, challenge links and leaderboards.
+**Slither. Shed. Surge.** A terminal remix of Snake: soft green phosphor (CRT effects adjustable with `set crt soft|full|off`), a working command line as the menu, and online versus by invite code. Underneath are coils, mutations, bosses, arena twists, four snake types, rhythm mode, a level editor, challenge links and leaderboards.
 
 ## The command line
 
@@ -17,7 +17,7 @@ The game boots into a terminal. Type a command, click a highlighted one, or tap 
 | `scores [board] [--local]` | Leaderboards: `arcade`, `daily`, `classic`, `rhythm`. |
 | `trophies`, `stats` | Achievements and personal bests. |
 | `editor`, `levels` | The level editor and your saved levels. |
-| `set [key value]` | Settings: `name`, `color green\|amber\|white`, `sound`, `music`, `motion full\|reduced`, `touch swipe\|dpad`. |
+| `set [key value]` | Settings: `name`, `color green\|amber\|white`, `crt soft\|full\|off`, `sound`, `music`, `motion full\|reduced`, `touch swipe\|dpad`. |
 | `help`, `controls`, `clear`, `about` | — |
 
 Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` stops `invite` or `join`. There are a few easter eggs too.
