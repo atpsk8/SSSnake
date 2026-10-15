@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#06070f" />
+    <meta name="description" content="SSSnake: Slither, Shed, Surge. A neon remix of Snake with power-ups, hazards, arenas and a daily challenge." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>SSSnake</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="hud" id="hud">
+        <div class="hud-block">
+          <div class="label">Score</div>
+          <div id="score" class="big">0</div>
+        </div>
+        <div class="hud-mid">
+          <span id="mult" class="chip" title="Score multiplier">x1</span>
+          <span id="combo" class="chip combo hidden"></span>
+          <span id="effects" class="effects"></span>
+        </div>
+        <div class="hud-block right">
+          <div class="label" id="levelLabel">Classic</div>
+          <div id="arenaName" class="sub">Classic Box</div>
+        </div>
+      </header>
+
+      <div class="meters" id="meters">
+        <div class="meter" id="surgeMeter" title="Surge: hold Shift">
+          <span>Surge</span>
+          <div class="bar"><div id="surgeBar"></div></div>
+        </div>
+        <div class="meter" id="shedMeter" title="Shed: press Space">
+          <span>Shed</span>
+          <div class="bar"><div id="shedBar"></div></div>
+        </div>
+        <div class="meter" id="levelMeter" title="Food until next level">
+          <span>Next</span>
+          <div class="bar"><div id="levelBar"></div></div>
+        </div>
+      </div>
+
+      <main id="stage">
+        <canvas id="board" aria-label="Game board"></canvas>
+
+        <div id="banner" class="banner hidden" aria-live="polite">
+          <h2 id="bannerTitle"></h2>
+          <p id="bannerSub"></p>
+        </div>
+
+        <section id="menu" class="overlay">
+          <div class="panel">
+            <h1 class="logo">SSS<span>nake</span></h1>
+            <p class="tagline">Slither. Shed. Surge.</p>
+            <div id="modeList" class="modes"></div>
+            <div class="row">
+              <button class="ghost" data-open="help">How to play</button>
+              <button class="ghost" data-open="settings">Settings</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="pause" class="overlay hidden">
+          <div class="panel small">
+            <h2>Paused</h2>
+            <button id="resumeBtn" class="primary">Resume</button>
+            <button id="restartBtn">Restart</button>
+            <button class="ghost" data-open="settings">Settings</button>
+            <button class="ghost" id="quitBtn">Main menu</button>
+          </div>
+        </section>
+
+        <section id="over" class="overlay hidden">
+          <div class="panel small">
+            <h2 id="overTitle">Game over</h2>
+            <p id="overCause" class="muted"></p>
+            <div class="final"><span id="finalScore">0</span><em id="newBest" class="hidden">New best!</em></div>
+            <p class="muted">Best: <strong id="bestScore">0</strong></p>
+            <dl id="summary" class="summary"></dl>
+            <button id="retryBtn" class="primary">Play again <kbd>Enter</kbd></button>
+            <button class="ghost" id="overMenuBtn">Main menu</button>
+          </div>
+        </section>
+
+        <section id="settings" class="overlay hidden">
+          <div class="panel small">
+            <h2>Settings</h2>
+            <label class="setting">
+              <span>Colours</span>
+              <select id="optPalette">
+                <option value="neon">Neon</option>
+                <option value="safe">Colour-blind safe</option>
+              </select>
+            </label>
+            <label class="setting">
+              <span>Touch controls</span>
+              <select id="optTouch">
+                <option value="swipe">Swipe</option>
+                <option value="dpad">Swipe + D-pad</option>
+              </select>
+            </label>
+            <label class="setting check"><input type="checkbox" id="optMotion" /> <span>Reduced motion (no shake or flashes)</span></label>
+            <label class="setting check"><input type="checkbox" id="optSound" /> <span>Sound effects</span></label>
+            <label class="setting check"><input type="checkbox" id="optMusic" /> <span>Zen music</span></label>
+            <button class="primary" data-back>Done</button>
+          </div>
+        </section>
+
+        <section id="help" class="overlay hidden">
+          <div class="panel">
+            <h2>How to play</h2>
+            <div class="help-grid">
+              <div>
+                <h3>Controls</h3>
+                <ul>
+                  <li><kbd>Arrows</kbd>/<kbd>WASD</kbd> or swipe to turn</li>
+                  <li><kbd>Space</kbd>, two-finger tap or <b>Shed</b> to shed your tail</li>
+                  <li>Hold <kbd>Shift</kbd> or <b>Surge</b> to boost</li>
+                  <li><kbd>P</kbd>/<kbd>Esc</kbd> to pause, <kbd>Enter</kbd> to retry</li>
+                </ul>
+                <h3>Shed &amp; Surge</h3>
+                <p><b>Shed</b> drops the back half of your tail. It hardens into a wall for 15 seconds. Longer snakes score more, so shedding trades points for room.</p>
+                <p><b>Surge</b> speeds you up and doubles points while it lasts. Eating refills the meter.</p>
+                <p>Eat again within 2 seconds to build a <b>combo</b> up to x4.</p>
+              </div>
+              <div>
+                <h3>Power-ups</h3>
+                <ul id="powerHelp" class="legend"></ul>
+                <h3>Hazards</h3>
+                <ul class="legend">
+                  <li><i class="dot mine"></i><b>Mines</b>: deadly only while lit. Watch the pulse.</li>
+                  <li><i class="dot rival"></i><b>Rival</b>: steals food. Make it crash into you for a bonus.</li>
+                  <li><i class="dot mouse"></i><b>Mice</b>: run away; catch them for points.</li>
+                </ul>
+              </div>
+            </div>
+            <button class="primary" data-back>Got it</button>
+          </div>
+        </section>
+      </main>
+
+      <footer id="controls" class="controls">
+        <button id="btnShed" class="ctl">Shed</button>
+        <div id="dpad" class="dpad hidden">
+          <button data-dir="up" aria-label="Up">▲</button>
+          <button data-dir="left" aria-label="Left">◀</button>
+          <button data-dir="right" aria-label="Right">▶</button>
+          <button data-dir="down" aria-label="Down">▼</button>
+        </div>
+        <button id="btnPause" class="ctl small" aria-label="Pause">❚❚</button>
+        <button id="btnSurge" class="ctl">Surge</button>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
