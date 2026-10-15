@@ -1,7 +1,7 @@
 import type { LevelData } from './game/levels';
 import type { ModeId, SnakeClass } from './game/types';
 
-export type PaletteId = 'neon' | 'safe';
+export type PaletteId = 'green' | 'amber' | 'white';
 export type TouchStyle = 'swipe' | 'dpad';
 export type SkinId = 'classic' | 'ember' | 'ghost' | 'gold';
 
@@ -53,7 +53,7 @@ function defaults(): SaveData {
     levels: [],
     boards: {},
     settings: {
-      palette: 'neon',
+      palette: 'green',
       reducedMotion: reduced,
       sound: true,
       music: true,
@@ -78,11 +78,17 @@ export function load(): SaveData {
       achievements: Array.isArray(parsed.achievements) ? parsed.achievements : [],
       levels: Array.isArray(parsed.levels) ? parsed.levels : [],
       boards: { ...parsed.boards },
-      settings: { ...base.settings, ...parsed.settings },
+      settings: migrate({ ...base.settings, ...parsed.settings }),
     };
   } catch {
     return base;
   }
+}
+
+/** Older saves used 'neon' / 'safe' colour schemes. */
+function migrate(s: Settings): Settings {
+  if (!['green', 'amber', 'white'].includes(s.palette)) s.palette = 'green';
+  return s;
 }
 
 function lastKeys<T>(rec: Record<string, T>, n: number): Record<string, T> {

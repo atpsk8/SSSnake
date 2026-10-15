@@ -53,11 +53,11 @@ export const CLASS_UNLOCK: Record<SnakeClass, string | null> = {
   python: 'big_coil',
 };
 
-export const SKINS: Record<SkinId, { name: string; head: string; tail: string; unlock: string | null; hint: string }> = {
-  classic: { name: 'Neon', head: '', tail: '', unlock: null, hint: 'Default' },
-  ember: { name: 'Ember', head: '#ffb347', tail: '#ff3d3d', unlock: 'shed10', hint: 'Shed 10 times in one run' },
-  ghost: { name: 'Ghost', head: '#e8e8ff', tail: '#7a6cff', unlock: 'rhythm16', hint: '16 on-beat turns in a row' },
-  gold: { name: 'Gold', head: '#fff3a0', tail: '#d4a017', unlock: 'score5k', hint: 'Score 5,000 in one run' },
+export const SKINS: Record<SkinId, { name: string; desc: string; unlock: string | null; hint: string }> = {
+  classic: { name: 'solid', desc: 'solid blocks', unlock: null, hint: 'default' },
+  ember: { name: 'scanline', desc: 'striped blocks', unlock: 'shed10', hint: 'shed 10 times in one run' },
+  ghost: { name: 'wireframe', desc: 'hollow blocks', unlock: 'rhythm16', hint: '16 on-beat turns in a row' },
+  gold: { name: 'overclock', desc: 'white-hot head', unlock: 'score5k', hint: 'score 5,000 in one run' },
 };
 
 export const isUnlocked = (owned: string[], req: string | null) => req === null || owned.includes(req);

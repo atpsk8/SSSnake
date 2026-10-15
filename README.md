@@ -1,80 +1,85 @@
 # SSSnake
 
-**Slither. Shed. Surge.** A neon remix of Snake for the browser. The classic grid is still there, plus coils, mutations, bosses, arena twists, four snake types, rhythm and versus modes, a level editor, shareable challenges and leaderboards.
+**Slither. Shed. Surge.** A terminal remix of Snake: green CRT phosphor, a working command line as the menu, and online versus by invite code. Underneath are coils, mutations, bosses, arena twists, four snake types, rhythm mode, a level editor, challenge links and leaderboards.
 
-## Play
+## The command line
+
+The game boots into a terminal. Type a command, click a highlighted one, or tap a chip (on phones).
+
+| Command | What it does |
+| --- | --- |
+| `play [mode]` | Start `arcade` (default), `classic`, `daily`, `zen` or `rhythm`. Each mode also works on its own as a command. |
+| `versus` | Two players on one device. |
+| `invite` | Host an online match: prints a 4-character room code and a join link. |
+| `join <code>` | Join a friend's online match. Opening a `#join=CODE` link does this automatically. |
+| `snake [type]` | List or pick a snake type (`racer`, `viper`, `cobra`, `python`). |
+| `skin [name]` | `solid`, `scanline`, `wireframe`, `overclock`. |
+| `scores [board] [--local]` | Leaderboards: `arcade`, `daily`, `classic`, `rhythm`. |
+| `trophies`, `stats` | Achievements and personal bests. |
+| `editor`, `levels` | The level editor and your saved levels. |
+| `set [key value]` | Settings: `name`, `color green\|amber\|white`, `sound`, `music`, `motion full\|reduced`, `touch swipe\|dpad`. |
+| `help`, `controls`, `clear`, `about` | — |
+
+Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` stops `invite` or `join`. There are a few easter eggs too.
+
+## Controls
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
-| Turn | Arrows / WASD | Swipe anywhere on the play area (optional D-pad in Settings) |
-| Shed | Space | Two-finger tap or the **Shed** button |
-| Ability | Shift / E (hold or tap, depending on snake type) | Press and hold, double-tap, or the ability button |
-| Pause | P / Esc | ❚❚ button |
-| Retry | Enter / R | Play again |
-| Versus | P1: WASD, Q shed, E ability · P2: Arrows, / shed, . ability | Each player swipes on their own half of the screen |
+| Turn | Arrows / WASD | Swipe anywhere (optional D-pad: `set touch dpad`) |
+| Shed | Space | Two-finger tap or **shed** |
+| Ability | Shift / E | Press and hold, double-tap, or the ability button |
+| Pause | P / Esc | `\|\|` |
+| Local versus | P1: WASD, Q shed, E ability · P2: Arrows, / shed, . ability | Each player swipes on their own half |
 
-### Core mechanics
+## Mechanics in brief
 
-- **Coil:** close a loop with your body (your own shed skin counts too) and everything inside is captured. Food scores x2, and mice, mines, rivals and bosses can all be caught.
-- **Shed:** drop the back half of your tail as a wall for 15 seconds. Longer snakes score more, so shedding trades points for room. Bosses fall for it.
-- **Combos:** eat again within 2 seconds for x2, x3 and up to x4.
-- **Rewind:** Arcade and Daily runs get one rewind, which undoes your last few seconds when you die.
+- **Coil:** close a loop with your body (your shed skin counts) and everything inside is captured.
+- **Shed:** drop half your tail as a 15-second wall.
+- **Combos:** up to x4, and length raises your multiplier.
+- **Arcade:** draft a mutation (from 20) after each level. Every 5th level is a boss (Serpent King / Swarm Queen). From level 6, twists appear: ice, darkness, gravity wells, arrow tiles, mirror and ripening. You get one rewind per run.
+- **Snake types:** Racer (Surge), Viper (Dash), Cobra (Spit) and Python (Hunker). The last three unlock through achievements.
 
-### Snake types
+## Online versus
 
-| Type | Ability | Unlocked by |
-| --- | --- | --- |
-| Racer | Surge (hold): faster, points x2 | Available from the start |
-| Viper | Dash (tap): lunge three cells, passing through yourself | Reach level 5 |
-| Cobra | Spit (tap): breaks walls, mines, mice and rivals; hurts bosses | Defeat a boss |
-| Python | Hunker (hold): freeze in place; coils score more | Capture 3+ things in one coil |
+`invite` creates a room and prints a code; a friend runs `join CODE` or opens the link. The browsers then connect **directly** (WebRTC, peer to peer):
 
-### Modes
+- **Matchmaking:** `api/room.js` only swaps the two connection offers. Rooms expire after 10 minutes and are deleted once connected.
+- **Netcode:** deterministic **lockstep**. Both players run the same simulation from the same seed and send only their key presses. Input delay is set from the measured ping (3–12 frames). Checksums every 30 frames detect any drift.
+- **Format:** best of three, with sudden death after 90 seconds. Each player brings their own snake type.
+- **Privacy:** like any peer-to-peer game, each player's IP address is visible to the other.
+- **Network limits:** there is no relay (TURN) server, so some strict networks (some offices, schools or mobile carriers) can't connect directly. The game then says so.
 
-- **Classic:** pure Snake.
-- **Arcade:** levels rotate through five arenas. Clear a level to draft one of 20 **mutations**. Every 5th level is a **boss** (Serpent King or Swarm Queen). From level 6, **twists** appear: ice, darkness, gravity wells, arrow tiles, mirror and ripening food.
-- **Daily:** Arcade on a date-seeded run, against a ghost of your best run that day.
-- **Zen:** no death, soft music.
-- **Rhythm:** moves follow the beat. On-beat turns build a groove multiplier up to x4, and the tempo rises.
-- **Versus:** two players on one device, best of three, with sudden death after 90 s.
-- **Custom:** levels from the editor or a shared link.
+## Leaderboards and achievements
 
-### Editor and challenge links
-
-The level editor (from the main menu) paints walls, portals, mines, gravity wells, arrow tiles and the spawn point. It also sets twists and a food goal. You can test a level, save it on this device, or **share a link**. After any run, **Share challenge link** makes a URL that opens the same seed (or level) with your score as the target.
-
-### Leaderboards and achievements
-
-- **This device:** top 10 per board (Arcade, Daily, Classic, Rhythm), stored in `localStorage`. Always available.
-- **Global:** top 20 per board, served by `api/scores.js` (a Vercel function) backed by Upstash Redis. Players submit scores from the game-over screen by choice. The server checks scores are plausible, validates names and boards, and rate-limits each IP to 10 submissions a minute. Scores are not verified by replaying the game, so a determined cheater could still post fake ones.
+- **Local:** top 10 per board, always available.
+- **Global:** top 20 per board, served by `api/scores.js`, with plausibility checks, validation and rate limits. It only receives a score when the player chooses to submit it.
 - **Achievements:** 18, which unlock snake types and skins.
 
 ## Develop
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173 (no /api locally; the game falls back to local scores)
-npm test         # Vitest: engine rules, v2 mechanics, bot soak test in every mode, codecs, API
+npm run dev      # http://localhost:5173 (serves /api from memory, so online play and scores work locally)
+npm test         # engine, mechanics, bot soak, codecs, API handlers, lockstep netcode
 npm run build    # type-check + production build to dist/
-npm run preview  # serve the production build
+npm run preview  # serve the production build (no /api)
 ```
 
-The stack is Vite, TypeScript and Canvas 2D, with no runtime dependencies. Sound is generated with the Web Audio API.
+To try online play locally, open two browser windows on `http://localhost:5173`. Run `invite` in one and `join <code>` in the other.
 
-- `src/game/`: the deterministic engine (`engine.ts`), plus arenas, levels, modes, snake types, mutations, coil detection and the seeded RNG.
-- `src/render.ts`, `src/audio.ts`, `src/input.ts`: drawing, sound and controls.
-- `src/main.ts`, `src/editor.ts`: UI, screens, game loop and the level editor.
-- `src/storage.ts`, `src/progress.ts`, `src/ghost.ts`, `src/share.ts`, `src/leaderboard.ts`: saves, achievements, ghosts, challenge links and the leaderboard client.
-- `api/scores.js`, `api/_lib.js`: the global leaderboard endpoint. Files starting with `_` are not deployed as endpoints.
-- `docs/V2_DESIGN.md`: the design reference.
+The stack is Vite, TypeScript and Canvas 2D. Fonts are IBM Plex Mono and VT323 (bundled through Fontsource), and sound is generated with the Web Audio API.
+
+- **Engine:** `src/game/` is the deterministic engine; online play relies on it being deterministic.
+- **Netcode:** `src/net/` has `lockstep.ts`, `online.ts` (match flow) and `peer.ts` (WebRTC and signaling).
+- **Front end:** `src/terminal.ts` and `src/commands.ts` (the command line), `src/render.ts` (CRT renderer), `src/main.ts` (UI wiring) and `src/editor.ts`.
+- **API:** `api/scores.js` and `api/room.js` are the Vercel functions. `api/_lib.js` and `api/_memory.js` are shared code (files starting with `_` aren't deployed as endpoints).
 
 ## Deploy (Vercel)
 
-`vercel.json` sets the Vite preset, `npm run build` and the `dist/` output. Vercel picks up `api/` automatically.
-
 ```bash
-npx vercel          # preview deployment
+npx vercel          # preview
 npx vercel --prod   # production
 ```
 
-To switch on the **global leaderboard**, open the Vercel project, go to **Storage**, and add **Upstash for Redis** (Marketplace). Connect it to the project and redeploy. The function reads `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL` / `KV_REST_API_TOKEN`). Until then it answers `503`, and the game shows scores from the player's device only.
+Both the **global leaderboard** and **online versus** need a key-value store. In the Vercel project, go to **Storage**, add **Upstash for Redis** (Marketplace), connect it, and redeploy. The functions read `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (or `KV_REST_API_URL` / `KV_REST_API_TOKEN`). Without a store, the leaderboard falls back to local scores, and `invite` / `join` explain that online play isn't set up.

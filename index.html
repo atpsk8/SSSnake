@@ -3,43 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#06070f" />
-    <meta name="description" content="SSSnake: Slither, Shed, Surge. A neon remix of Snake with coils, mutations, bosses, rhythm, versus, a level editor and a daily challenge." />
+    <meta name="theme-color" content="#020a04" />
+    <meta name="description" content="SSSnake: a terminal remix of Snake. Coils, mutations, bosses, rhythm, online versus with invite codes, a level editor and a daily challenge." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>SSSnake</title>
   </head>
   <body>
     <div id="app">
       <header class="hud" id="hud">
-        <div class="hud-block">
-          <div class="label" id="scoreLabel">Score</div>
-          <div id="score" class="big">0</div>
-        </div>
-        <div class="hud-mid">
-          <span id="mult" class="chip" title="Score multiplier">x1</span>
-          <span id="combo" class="chip combo hidden"></span>
-          <span id="rewinds" class="chip hidden" title="Rewinds left"></span>
-          <span id="effects" class="effects"></span>
-        </div>
-        <div class="hud-block right">
-          <div class="label" id="levelLabel">Classic</div>
-          <div id="arenaName" class="sub">Classic Box</div>
-        </div>
+        <span class="hud-item"><span class="k" id="scoreLabel">SCORE</span> <span id="score" class="v big">000000</span></span>
+        <span class="hud-item"><span id="mult" class="v">x1.0</span></span>
+        <span id="combo" class="hud-item v hot hidden"></span>
+        <span id="rewinds" class="hud-item v hidden" title="Rewinds left"></span>
+        <span id="effects" class="hud-item v hot"></span>
+        <span class="hud-item right"><span class="k" id="levelLabel">CLASSIC</span> <span id="arenaName" class="v">box</span></span>
       </header>
 
       <div class="meters" id="meters">
-        <div class="meter" id="abilityMeter">
-          <span id="abilityName">Surge</span>
-          <div class="bar"><div id="abilityBar"></div></div>
-        </div>
-        <div class="meter" id="shedMeter" title="Shed">
-          <span>Shed</span>
-          <div class="bar"><div id="shedBar"></div></div>
-        </div>
-        <div class="meter" id="levelMeter" title="Food until next level">
-          <span id="levelMeterName">Next</span>
-          <div class="bar"><div id="levelBar"></div></div>
-        </div>
+        <div class="meter" id="abilityMeter"><span class="k" id="abilityName">SURGE</span><span class="bar"><span id="abilityBar"></span></span></div>
+        <div class="meter" id="shedMeter"><span class="k">SHED</span><span class="bar"><span id="shedBar"></span></span></div>
+        <div class="meter" id="levelMeter"><span class="k" id="levelMeterName">NEXT</span><span class="bar"><span id="levelBar"></span></span></div>
       </div>
       <div id="mutationRow" class="mutation-row"></div>
 
@@ -51,207 +34,138 @@
           <p id="bannerSub"></p>
         </div>
 
-        <section id="menu" class="overlay">
-          <div class="panel wide">
-            <h1 class="logo">SSS<span>nake</span></h1>
-            <p class="tagline">Slither. Shed. Surge.</p>
-            <div id="modeList" class="modes"></div>
-            <h3 class="section-title">Snake type</h3>
-            <div id="classList" class="classes"></div>
-            <div class="row wrap">
-              <button class="ghost" data-open="editor">Level editor</button>
-              <button class="ghost" data-open="boards">Leaderboard</button>
-              <button class="ghost" data-open="trophies">Achievements</button>
-            </div>
-            <div class="row wrap">
-              <button class="ghost" data-open="help">How to play</button>
-              <button class="ghost" data-open="settings">Settings</button>
-            </div>
-          </div>
-        </section>
-
-        <section id="challenge" class="overlay hidden">
-          <div class="panel small">
-            <h2>Challenge</h2>
-            <p id="challengeText" class="muted"></p>
-            <button id="challengeGo" class="primary">Accept</button>
-            <button class="ghost" id="challengeSkip">Not now</button>
+        <section id="term" class="overlay term">
+          <div class="win term-window">
+            <div class="win-bar"><span id="termTitle">guest@sssnake: ~</span><span class="win-lights" aria-hidden="true">_ □ x</span></div>
+            <div id="termOut" class="term-out" role="log" aria-live="polite"></div>
+            <form id="termForm" class="term-line" autocomplete="off">
+              <label id="termPrompt" for="termIn"></label>
+              <input id="termIn" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go" aria-label="Command" />
+            </form>
+            <div id="termChips" class="term-chips"></div>
           </div>
         </section>
 
         <section id="pause" class="overlay hidden">
-          <div class="panel small">
-            <h2>Paused</h2>
-            <button id="resumeBtn" class="primary">Resume</button>
-            <button id="restartBtn">Restart</button>
-            <button class="ghost" data-open="settings">Settings</button>
-            <button class="ghost" id="quitBtn">Main menu</button>
+          <div class="win small">
+            <div class="win-bar"><span>paused</span></div>
+            <div class="win-body">
+              <p id="pauseNote" class="dim hidden">The match keeps running online.</p>
+              <button id="resumeBtn" class="primary">[ resume ]</button>
+              <button id="restartBtn">[ restart ]</button>
+              <button id="settingsBtn">[ settings ]</button>
+              <button id="quitBtn">[ quit to terminal ]</button>
+            </div>
           </div>
         </section>
 
         <section id="draft" class="overlay hidden">
-          <div class="panel">
-            <h2 id="draftTitle">Level cleared</h2>
-            <p class="muted">Pick a mutation. It lasts for the rest of the run.</p>
-            <div id="draftCards" class="draft-cards"></div>
-            <p id="draftOwned" class="muted small-text"></p>
+          <div class="win">
+            <div class="win-bar"><span id="draftTitle">level cleared</span></div>
+            <div class="win-body">
+              <p class="dim">&gt; select a mutation. it persists for the rest of the run.</p>
+              <div id="draftCards" class="draft-cards"></div>
+              <p id="draftOwned" class="dim small-text"></p>
+            </div>
           </div>
         </section>
 
         <section id="over" class="overlay hidden">
-          <div class="panel small">
-            <h2 id="overTitle">Game over</h2>
-            <p id="overCause" class="muted"></p>
-            <div class="final"><span id="finalScore">0</span><em id="newBest" class="hidden">New best!</em></div>
-            <p id="bestLine" class="muted">Best: <strong id="bestScore">0</strong></p>
-            <p id="challengeResult" class="challenge-result hidden"></p>
-            <dl id="summary" class="summary"></dl>
-            <div id="submitBox" class="submit-box hidden">
-              <label class="setting">
-                <span>Name</span>
-                <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="Your name" />
-              </label>
-              <button id="submitBtn">Submit to global leaderboard</button>
-              <p id="submitStatus" class="muted small-text"></p>
+          <div class="win small">
+            <div class="win-bar"><span id="overTitle">process exited</span></div>
+            <div class="win-body">
+              <p id="overCause" class="dim"></p>
+              <div class="final"><span id="finalScore">0</span><em id="newBest" class="hidden">new best</em></div>
+              <p id="bestLine" class="dim">best: <strong id="bestScore">0</strong></p>
+              <p id="challengeResult" class="challenge-result hidden"></p>
+              <p id="onlineStatus" class="challenge-result hidden"></p>
+              <dl id="summary" class="summary"></dl>
+              <div id="submitBox" class="submit-box hidden">
+                <label class="setting">
+                  <span>name</span>
+                  <input id="nameInput" type="text" maxlength="16" autocomplete="nickname" placeholder="your name" />
+                </label>
+                <button id="submitBtn">[ submit to global leaderboard ]</button>
+                <p id="submitStatus" class="dim small-text"></p>
+              </div>
+              <button id="retryBtn" class="primary">[ play again ] <kbd>enter</kbd></button>
+              <button id="shareBtn">[ share challenge link ]</button>
+              <button id="overMenuBtn">[ back to terminal ]</button>
             </div>
-            <button id="retryBtn" class="primary">Play again <kbd>Enter</kbd></button>
-            <button id="shareBtn" class="ghost">Share challenge link</button>
-            <button class="ghost" id="overMenuBtn">Main menu</button>
-          </div>
-        </section>
-
-        <section id="boards" class="overlay hidden">
-          <div class="panel">
-            <h2>Leaderboard</h2>
-            <div id="boardTabs" class="tabs"></div>
-            <div class="tabs" id="scopeTabs">
-              <button data-scope="global" class="tab">Global</button>
-              <button data-scope="local" class="tab">This device</button>
-            </div>
-            <ol id="boardList" class="board-list"></ol>
-            <p id="boardStatus" class="muted small-text"></p>
-            <button class="primary" data-back>Done</button>
-          </div>
-        </section>
-
-        <section id="trophies" class="overlay hidden">
-          <div class="panel">
-            <h2>Achievements</h2>
-            <p id="trophyCount" class="muted"></p>
-            <ul id="trophyList" class="trophy-list"></ul>
-            <h3 class="section-title">Skins</h3>
-            <div id="skinList" class="skins"></div>
-            <button class="primary" data-back>Done</button>
           </div>
         </section>
 
         <section id="settings" class="overlay hidden">
-          <div class="panel small">
-            <h2>Settings</h2>
-            <label class="setting">
-              <span>Name</span>
-              <input id="optName" type="text" maxlength="16" placeholder="For leaderboards" />
-            </label>
-            <label class="setting">
-              <span>Colours</span>
-              <select id="optPalette">
-                <option value="neon">Neon</option>
-                <option value="safe">Colour-blind safe</option>
-              </select>
-            </label>
-            <label class="setting">
-              <span>Touch controls</span>
-              <select id="optTouch">
-                <option value="swipe">Swipe</option>
-                <option value="dpad">Swipe + D-pad</option>
-              </select>
-            </label>
-            <label class="setting check"><input type="checkbox" id="optMotion" /> <span>Reduced motion (no shake or flashes)</span></label>
-            <label class="setting check"><input type="checkbox" id="optSound" /> <span>Sound effects</span></label>
-            <label class="setting check"><input type="checkbox" id="optMusic" /> <span>Zen music</span></label>
-            <button class="primary" data-back>Done</button>
-          </div>
-        </section>
-
-        <section id="help" class="overlay hidden">
-          <div class="panel wide">
-            <h2>How to play</h2>
-            <div class="help-grid">
-              <div>
-                <h3>Controls</h3>
-                <ul>
-                  <li><kbd>Arrows</kbd>/<kbd>WASD</kbd> or swipe to turn</li>
-                  <li><kbd>Space</kbd>, two-finger tap or <b>Shed</b> to shed</li>
-                  <li><kbd>Shift</kbd>/<kbd>E</kbd>, press-and-hold or double-tap for your ability</li>
-                  <li><kbd>P</kbd>/<kbd>Esc</kbd> pause, <kbd>Enter</kbd> retry</li>
-                  <li>Versus: P1 <kbd>WASD</kbd> <kbd>Q</kbd> shed <kbd>E</kbd> ability; P2 <kbd>Arrows</kbd> <kbd>/</kbd> shed <kbd>.</kbd> ability</li>
-                </ul>
-                <h3>Coil</h3>
-                <p>Close a loop with your body (your shed skin counts too). Everything inside is captured: food at double points, mice, mines, even the rival.</p>
-                <h3>Shed</h3>
-                <p>Drops the back half of your tail as a wall for 15 seconds. Longer snakes score more, so it's a trade. Bosses fall for it.</p>
-                <h3>Snake types</h3>
-                <ul id="classHelp" class="legend"></ul>
-              </div>
-              <div>
-                <h3>Power-ups</h3>
-                <ul id="powerHelp" class="legend"></ul>
-                <h3>Hazards</h3>
-                <ul class="legend">
-                  <li><i class="dot mine"></i><b>Mines</b>: deadly only while lit.</li>
-                  <li><i class="dot rival"></i><b>Rival</b>: steals food. Coil it or make it crash into you.</li>
-                  <li><i class="dot mouse"></i><b>Mice</b>: run away; catch them for points.</li>
-                  <li><i class="dot boss"></i><b>Bosses</b> every 5th level. Lure the Serpent King into your shed skin; eat the Swarm Queen's drones to drop her shield.</li>
-                </ul>
-                <h3>Arena twists</h3>
-                <ul id="twistHelp" class="legend"></ul>
-                <h3>Arcade runs</h3>
-                <p>Clear a level to draft a <b>mutation</b>. You get one <b>rewind</b> per run, which undoes your last few seconds when you die.</p>
-              </div>
+          <div class="win small">
+            <div class="win-bar"><span>settings</span></div>
+            <div class="win-body">
+              <label class="setting"><span>name</span><input id="optName" type="text" maxlength="16" placeholder="for leaderboards" /></label>
+              <label class="setting">
+                <span>phosphor</span>
+                <select id="optPalette">
+                  <option value="green">green</option>
+                  <option value="amber">amber</option>
+                  <option value="white">white</option>
+                </select>
+              </label>
+              <label class="setting">
+                <span>touch</span>
+                <select id="optTouch">
+                  <option value="swipe">swipe</option>
+                  <option value="dpad">swipe + d-pad</option>
+                </select>
+              </label>
+              <label class="setting check"><input type="checkbox" id="optMotion" /> <span>reduced motion (no flicker, shake or flashes)</span></label>
+              <label class="setting check"><input type="checkbox" id="optSound" /> <span>sound effects</span></label>
+              <label class="setting check"><input type="checkbox" id="optMusic" /> <span>zen music</span></label>
+              <button class="primary" id="settingsDone">[ done ]</button>
             </div>
-            <button class="primary" data-back>Got it</button>
           </div>
         </section>
       </main>
 
       <footer id="controls" class="controls">
-        <button id="btnShed" class="ctl">Shed</button>
+        <button id="btnShed" class="ctl">shed</button>
         <div id="dpad" class="dpad hidden">
-          <button data-dir="up" aria-label="Up">▲</button>
-          <button data-dir="left" aria-label="Left">◀</button>
-          <button data-dir="right" aria-label="Right">▶</button>
-          <button data-dir="down" aria-label="Down">▼</button>
+          <button data-dir="up" aria-label="Up">^</button>
+          <button data-dir="left" aria-label="Left">&lt;</button>
+          <button data-dir="right" aria-label="Right">&gt;</button>
+          <button data-dir="down" aria-label="Down">v</button>
         </div>
-        <button id="btnPause" class="ctl small" aria-label="Pause">❚❚</button>
-        <button id="btnAbility" class="ctl">Surge</button>
+        <button id="btnPause" class="ctl small" aria-label="Pause">||</button>
+        <button id="btnAbility" class="ctl">surge</button>
       </footer>
 
-      <div id="editorBar" class="editor-bar hidden">
-        <div class="tools" id="editorTools"></div>
-        <details class="editor-options">
-          <summary>Level settings</summary>
-          <div class="editor-grid">
-            <label class="setting"><span>Name</span><input id="edName" type="text" maxlength="32" /></label>
-            <label class="setting"><span>Food goal (0 = endless)</span><input id="edGoal" type="number" min="0" max="999" /></label>
-            <label class="setting check"><input type="checkbox" id="edWrap" /> <span>Wraparound edges</span></label>
-            <label class="setting check"><input type="checkbox" id="edCollapse" /> <span>Collapsing border</span></label>
-            <label class="setting check"><input type="checkbox" id="edRival" /> <span>Rival snake</span></label>
-            <label class="setting check"><input type="checkbox" id="edMice" /> <span>Mice</span></label>
-            <label class="setting check"><input type="checkbox" id="edPowers" /> <span>Power-ups</span></label>
-            <div id="edTwists" class="twist-toggles"></div>
+      <div id="editorBar" class="editor-bar win hidden">
+        <div class="win-bar"><span>editor.exe</span></div>
+        <div class="win-body">
+          <div class="tools" id="editorTools"></div>
+          <details class="editor-options">
+            <summary>level settings</summary>
+            <div class="editor-grid">
+              <label class="setting"><span>name</span><input id="edName" type="text" maxlength="32" /></label>
+              <label class="setting"><span>food goal (0 = endless)</span><input id="edGoal" type="number" min="0" max="999" /></label>
+              <label class="setting check"><input type="checkbox" id="edWrap" /> <span>wraparound edges</span></label>
+              <label class="setting check"><input type="checkbox" id="edCollapse" /> <span>collapsing border</span></label>
+              <label class="setting check"><input type="checkbox" id="edRival" /> <span>rival snake</span></label>
+              <label class="setting check"><input type="checkbox" id="edMice" /> <span>mice</span></label>
+              <label class="setting check"><input type="checkbox" id="edPowers" /> <span>power-ups</span></label>
+              <div id="edTwists" class="twist-toggles"></div>
+            </div>
+          </details>
+          <div class="row wrap">
+            <button id="edTest" class="primary">[ test ]</button>
+            <button id="edSave">[ save ]</button>
+            <select id="edLoad" aria-label="Load a saved level"><option value="">load…</option></select>
+            <button id="edShare">[ share link ]</button>
+            <button id="edClear">[ clear ]</button>
+            <button id="edExit">[ exit ]</button>
           </div>
-        </details>
-        <div class="row wrap">
-          <button id="edTest" class="primary">Test</button>
-          <button id="edSave">Save</button>
-          <select id="edLoad" aria-label="Load a saved level"><option value="">Load…</option></select>
-          <button id="edShare">Share link</button>
-          <button id="edClear" class="ghost">Clear</button>
-          <button id="edExit" class="ghost">Exit</button>
+          <p id="edStatus" class="dim small-text"></p>
         </div>
-        <p id="edStatus" class="muted small-text"></p>
       </div>
     </div>
+    <div class="crt" aria-hidden="true"></div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

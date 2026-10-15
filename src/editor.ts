@@ -6,13 +6,13 @@ import type { Renderer } from './render';
 type Tool = 'wall' | 'erase' | 'portal' | 'mine' | 'well' | 'arrow' | 'spawn';
 
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
-  { id: 'wall', label: 'Wall', hint: 'Drag to paint walls' },
-  { id: 'erase', label: 'Erase', hint: 'Drag to clear cells' },
-  { id: 'portal', label: 'Portal', hint: 'Click two cells to link a portal pair (max 4)' },
-  { id: 'mine', label: 'Mine', hint: 'Click to toggle a mine' },
-  { id: 'well', label: 'Well', hint: 'Click to toggle a gravity well (max 6)' },
-  { id: 'arrow', label: 'Arrow', hint: 'Click to cycle an arrow tile: ↑ → ↓ ← off' },
-  { id: 'spawn', label: 'Spawn', hint: 'Click to move the start; click it again to turn it' },
+  { id: 'wall', label: 'wall', hint: 'Drag to paint walls' },
+  { id: 'erase', label: 'erase', hint: 'Drag to clear cells' },
+  { id: 'portal', label: 'portal', hint: 'Click two cells to link a portal pair (max 4)' },
+  { id: 'mine', label: 'mine', hint: 'Click to toggle a mine' },
+  { id: 'well', label: 'well', hint: 'Click to toggle a gravity well (max 6)' },
+  { id: 'arrow', label: 'arrow', hint: 'Click to cycle an arrow tile: ↑ → ↓ ← off' },
+  { id: 'spawn', label: 'spawn', hint: 'Click to move the start; click it again to turn it' },
 ];
 
 export interface EditorHost {
@@ -42,8 +42,15 @@ export class Editor {
     this.rebuild();
   }
 
-  open(level?: LevelData) {
-    if (level) this.level = structuredClone(level);
+  /** Start editing a copy of `level` (or keep the current one). */
+  load(level?: LevelData) {
+    if (level) {
+      this.level = structuredClone(level);
+      this.pendingPortal = null;
+    }
+  }
+
+  open() {
     this.active = true;
     this.syncOptions();
     this.refreshLoadList();
@@ -96,7 +103,7 @@ export class Editor {
     for (const m of MODIFIER_LIST) {
       const label = document.createElement('label');
       label.className = 'setting check';
-      label.innerHTML = `<input type="checkbox" data-twist="${m}" /> <span>${MODIFIER_INFO[m].name}: ${MODIFIER_INFO[m].desc}</span>`;
+      label.innerHTML = `<input type="checkbox" data-twist="${m}" /> <span>${MODIFIER_INFO[m].name.toLowerCase()}: ${MODIFIER_INFO[m].desc.toLowerCase()}</span>`;
       twists.appendChild(label);
     }
   }
@@ -168,7 +175,7 @@ export class Editor {
 
   private refreshLoadList() {
     const sel = $<HTMLSelectElement>('edLoad');
-    sel.innerHTML = '<option value="">Load…</option>';
+    sel.innerHTML = '<option value="">load…</option>';
     for (const l of this.host.levels()) {
       const o = document.createElement('option');
       o.value = l.name;

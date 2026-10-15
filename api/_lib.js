@@ -42,13 +42,18 @@ export function validateSubmission(body, now = new Date()) {
 }
 
 export function redisConfig(env) {
+  if (env.SSSNAKE_DEV_MEMORY === '1') return { memory: true };
   const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
   const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
   return url && token ? { url: url.replace(/\/$/, ''), token } : null;
 }
 
-/** Run commands through Upstash's REST pipeline endpoint. */
+/** Run commands through Upstash's REST pipeline endpoint (or the dev memory store). */
 export async function redis(cfg, commands) {
+  if (cfg.memory) {
+    const { memoryPipeline } = await import('./_memory.js');
+    return memoryPipeline(commands);
+  }
   const res = await fetch(`${cfg.url}/pipeline`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${cfg.token}`, 'Content-Type': 'application/json' },
@@ -81,3 +86,6 @@ export const json = (data, status = 200) =>
     status,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
+
+/** Best-effort client IP for rate limiting. */
+export const clientIp = (request) => (request.headers.get('x-forwarded-for') || 'unknown').split(',')[0].trim();

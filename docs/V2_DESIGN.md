@@ -85,3 +85,9 @@ The best Daily run of the day is recorded as head position and length per step, 
 
 ## Achievements and unlocks
 About 18 achievements are tracked locally, and a toast appears when one unlocks. They unlock snake types and snake skins (Classic, Ember, Ghost, Gold).
+
+## v3: terminal + online (added after playtesting)
+
+- **Look:** green CRT phosphor (`set color amber|white` for alternatives) with scanlines, flicker and glow. The board is a character grid: solid blocks for snakes and walls, glyphs for items (`@` food, `$` golden, `*` mines, `m` mice, `A`/`B` portals, `#` walls, `<>^v` arrows). Movement is discrete. Particles are "data bits".
+- **Command line:** the main menu is a working terminal (`src/terminal.ts`, `src/commands.ts`). The old menu, help, leaderboard, achievements and challenge overlays became commands.
+- **Online versus:** invite codes through `api/room.js` and a WebRTC data channel. Deterministic lockstep (`src/net/lockstep.ts`) sends inputs only, with ping-based input delay and periodic checksums. `src/net/online.ts` handles rounds and rematches.
