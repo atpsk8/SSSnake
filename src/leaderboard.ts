@@ -6,6 +6,7 @@ export interface GlobalScore {
   level: number;
   cls: SnakeClass;
   date: string;
+  id?: string;
 }
 
 export type FetchResult = { status: 'ok'; scores: GlobalScore[] } | { status: 'off' } | { status: 'error' };
@@ -15,6 +16,10 @@ const ERRORS: Record<string, string> = {
   implausible: 'That score looks off, so the server rejected it.',
   rate_limited: 'Too many submissions. Try again in a minute.',
   bad_name: 'Pick a name with letters or numbers.',
+  bad_replay: "Your run couldn't be verified.",
+  score_mismatch: "Your run couldn't be verified.",
+  replay_incomplete: "Your run couldn't be verified.",
+  wrong_seed: 'That daily run is from a different day.',
 };
 
 async function parse(res: Response): Promise<Record<string, unknown> | null> {
@@ -49,6 +54,7 @@ export async function submitGlobal(entry: {
   level: number;
   timeMs: number;
   cls: SnakeClass;
+  replay: string;
 }): Promise<SubmitResult> {
   try {
     const res = await fetch('/api/scores', {
@@ -62,5 +68,17 @@ export async function submitGlobal(entry: {
     return { status: 'ok', rank: (body.rank as number | null) ?? null };
   } catch {
     return { status: 'off' };
+  }
+}
+
+/** A leaderboard run's replay (encoded), or null. */
+export async function fetchReplay(id: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/replay?id=${encodeURIComponent(id)}`);
+    if (!(res.headers.get('content-type') ?? '').includes('application/json')) return null;
+    const body = (await res.json()) as { replay?: string };
+    return res.ok && typeof body.replay === 'string' ? body.replay : null;
+  } catch {
+    return null;
   }
 }

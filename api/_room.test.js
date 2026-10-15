@@ -43,3 +43,28 @@ describe('/api/room', () => {
     expect((await GET(new Request('https://x/api/room?code=ABCD'))).status).toBe(503);
   });
 });
+
+describe('/api/room quick match', () => {
+  beforeEach(() => vi.stubEnv('SSSNAKE_DEV_MEMORY', '1'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('pairs the second player with the first and reports the queue', async () => {
+    const a = await (await POST(req({ action: 'quick', offer: OFFER }))).json();
+    expect(a.role).toBe('host');
+    const stats = await (await GET(new Request('https://x/api/room?stats=1'))).json();
+    expect(stats.waiting).toBeGreaterThanOrEqual(1);
+    const b = await (await POST(req({ action: 'quick', offer: ANSWER }))).json();
+    expect(b.role).toBe('guest');
+    expect(b.code).toBe(a.code);
+    expect(b.offer).toBe(OFFER);
+  });
+
+  it('skips rooms that were closed or expired', async () => {
+    const a = await (await POST(req({ action: 'quick', offer: OFFER }))).json();
+    await POST(req({ action: 'close', code: a.code }));
+    const b = await (await POST(req({ action: 'quick', offer: OFFER }))).json();
+    expect(b.role).toBe('host');
+    expect(b.code).not.toBe(a.code);
+    await POST(req({ action: 'close', code: b.code }));
+  });
+});

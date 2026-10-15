@@ -28,6 +28,12 @@
 
       <main id="stage">
         <canvas id="board" aria-label="Game board"></canvas>
+        <canvas id="board3d" class="board3d" aria-label="Game board" style="display: none"></canvas>
+
+        <div id="replayTag" class="replay-tag hidden" aria-live="polite">
+          <span id="replayTitle"></span>
+          <span id="replayHint" class="dim"></span>
+        </div>
 
         <div id="banner" class="banner hidden" aria-live="polite">
           <h2 id="bannerTitle"></h2>
@@ -89,6 +95,8 @@
                 <p id="submitStatus" class="dim small-text"></p>
               </div>
               <button id="retryBtn" class="primary">[ play again ] <kbd>enter</kbd></button>
+              <button id="watchBtn">[ watch full replay ]</button>
+              <button id="clipBtn">[ save video clip ]</button>
               <button id="shareBtn">[ share challenge link ]</button>
               <button id="overMenuBtn">[ back to terminal ]</button>
             </div>
@@ -103,6 +111,7 @@
               <label class="setting">
                 <span>theme</span>
                 <select id="optTheme">
+                  <option value="neo">neo (3d)</option>
                   <option value="terminal">terminal</option>
                   <option value="nokia">nokia lcd</option>
                   <option value="gameboy">game boy</option>
@@ -110,6 +119,14 @@
                   <option value="minimal">minimal</option>
                 </select>
               </label>
+              <label class="setting">
+                <span>3d quality</span>
+                <select id="optQuality">
+                  <option value="high">high</option>
+                  <option value="low">low (faster)</option>
+                </select>
+              </label>
+              <label class="setting check"><input type="checkbox" id="optDeathcam" /> <span>instant replay when you die</span></label>
               <label class="setting">
                 <span>terminal colour</span>
                 <select id="optPalette">
@@ -135,7 +152,8 @@
               </label>
               <label class="setting check"><input type="checkbox" id="optMotion" /> <span>reduced motion (no shake or flashes)</span></label>
               <label class="setting check"><input type="checkbox" id="optSound" /> <span>sound effects</span></label>
-              <label class="setting check"><input type="checkbox" id="optMusic" /> <span>zen music</span></label>
+              <label class="setting check"><input type="checkbox" id="optMusic" /> <span>music</span></label>
+              <label class="setting check"><input type="checkbox" id="optHaptics" /> <span>vibration / controller rumble</span></label>
               <button class="primary" id="settingsDone">[ done ]</button>
             </div>
           </div>

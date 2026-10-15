@@ -92,6 +92,8 @@ export class Renderer {
   ghost: Vec[] | null = null;
   /** Editor: highlighted cell (e.g. the first end of a portal pair). */
   marker: Vec | null = null;
+  /** Instant-replay camera: zoom toward a cell. */
+  camera: { x: number; y: number; zoom: number } | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
@@ -371,6 +373,18 @@ export class Renderer {
       ctx.translate(Math.round((Math.random() - 0.5) * this.shake), Math.round((Math.random() - 0.5) * this.shake));
     }
     this.drawBoard(game);
+    if (this.camera && this.camera.zoom > 1.001) {
+      const { zoom } = this.camera;
+      ctx.fillStyle = p.bg;
+      ctx.fillRect(0, 0, size, size);
+      // Keep the view inside the board.
+      const half = size / 2 / zoom;
+      const cx = Math.min(size - half, Math.max(half, (this.camera.x + 0.5) * cell));
+      const cy = Math.min(size - half, Math.max(half, (this.camera.y + 0.5) * cell));
+      ctx.translate(size / 2, size / 2);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-cx, -cy);
+    }
     ctx.drawImage(this.board, 0, 0, size, size);
 
     if (this.beat > 0) {

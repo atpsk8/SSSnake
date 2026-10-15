@@ -41,6 +41,6 @@ describe('leaderboard validation', () => {
 
   it('parses ranges', () => {
     const rows = parseRange([JSON.stringify({ n: 'A', l: 3, c: 'racer', d: '2026-10-15' }), '120', 'garbage', '5']);
-    expect(rows).toEqual([{ name: 'A', level: 3, cls: 'racer', date: '2026-10-15', score: 120 }]);
+    expect(rows).toEqual([{ name: 'A', level: 3, cls: 'racer', date: '2026-10-15', id: undefined, score: 120 }]);
   });
 });

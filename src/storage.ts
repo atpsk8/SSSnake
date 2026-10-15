@@ -12,6 +12,9 @@ export interface Settings {
   theme: ThemeId;
   palette: PaletteId;
   crt: CrtLevel;
+  deathcam: boolean;
+  haptics: boolean;
+  quality: 'high' | 'low';
   reducedMotion: boolean;
   sound: boolean;
   music: boolean;
@@ -61,6 +64,9 @@ function defaults(): SaveData {
       theme: 'terminal',
       palette: 'green',
       crt: 'soft',
+      deathcam: true,
+      haptics: true,
+      quality: 'high',
       reducedMotion: reduced,
       sound: true,
       music: true,
@@ -96,7 +102,10 @@ export function load(): SaveData {
 function migrate(s: Settings): Settings {
   if (!['green', 'amber', 'white'].includes(s.palette)) s.palette = 'green';
   if (!['soft', 'full', 'off'].includes(s.crt)) s.crt = 'soft';
-  if (!['terminal', 'nokia', 'gameboy', 'paper', 'minimal'].includes(s.theme)) s.theme = 'terminal';
+  if (typeof s.deathcam !== 'boolean') s.deathcam = true;
+  if (typeof s.haptics !== 'boolean') s.haptics = true;
+  if (!['neo', 'terminal', 'nokia', 'gameboy', 'paper', 'minimal'].includes(s.theme)) s.theme = 'terminal';
+  if (s.quality !== 'high' && s.quality !== 'low') s.quality = 'high';
   return s;
 }
 

@@ -2,10 +2,11 @@ import type { NetMsg } from './lockstep';
 
 /**
  * Browser-to-browser link for online Versus. Signaling (offer/answer exchange) goes through
- * /api/room once; after that all traffic is direct over a WebRTC data channel.
+ * /api/room once; after that all traffic is direct over a WebRTC data channel, or through a
+ * TURN relay when /api/ice provides one and a direct path isn't possible.
  */
 
-const ICE: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+const STUN: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 const POLL_MS = 1500;
 const CONNECT_TIMEOUT_MS = 20000;
 const ROOM_LIFETIME_MS = 10 * 60 * 1000;
@@ -41,6 +42,28 @@ export class PeerLink {
     return !this.closed && this.ch.readyState === 'open';
   }
 
+  /** Whether traffic goes through a TURN relay (for the status line). */
+  async relayed(): Promise<boolean> {
+    try {
+      const stats = await this.pc.getStats();
+      let pairId = '';
+      stats.forEach((r) => {
+        if (r.type === 'transport' && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
+      });
+      let localId = '';
+      stats.forEach((r) => {
+        if (r.type === 'candidate-pair' && (r.id === pairId || (!pairId && r.nominated))) localId = r.localCandidateId;
+      });
+      let relay = false;
+      stats.forEach((r) => {
+        if (r.id === localId && r.candidateType === 'relay') relay = true;
+      });
+      return relay;
+    } catch {
+      return false;
+    }
+  }
+
   send(m: NetMsg) {
     if (this.open) this.ch.send(JSON.stringify(m));
   }
@@ -63,28 +86,73 @@ export class PeerLink {
   }
 }
 
-async function api(method: 'GET' | 'POST', body?: unknown, code?: string): Promise<{ status: number; data: Record<string, unknown> }> {
+// ---------------------------------------------------------------- server calls
+
+async function call(path: string, init?: RequestInit): Promise<{ status: number; data: Record<string, unknown>; json: boolean }> {
   let res: Response;
   try {
-    res = await fetch(method === 'GET' ? `/api/room?code=${encodeURIComponent(code ?? '')}` : '/api/room', {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    res = await fetch(path, init);
   } catch {
     throw new NetError('Network error. Check your connection.');
   }
-  const isJson = (res.headers.get('content-type') ?? '').includes('application/json');
-  const data = isJson ? ((await res.json()) as Record<string, unknown>) : {};
-  if (!isJson || data.configured === false) {
-    throw new NetError('Online play needs the Upstash store connected to the Vercel project (see README).');
-  }
-  if (res.status === 429) throw new NetError('Too many attempts. Wait a minute and try again.');
-  return { status: res.status, data };
+  const json = (res.headers.get('content-type') ?? '').includes('application/json');
+  const data = json ? ((await res.json()) as Record<string, unknown>) : {};
+  return { status: res.status, data, json };
 }
 
+async function room(method: 'GET' | 'POST', body?: unknown, code?: string) {
+  const r =
+    method === 'GET'
+      ? await call(`/api/room?code=${encodeURIComponent(code ?? '')}`)
+      : await call('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.json || r.data.configured === false) {
+    throw new NetError('Online play is not set up on this server yet (see docs/ONLINE_SETUP.md).');
+  }
+  if (r.status === 429) throw new NetError('Too many attempts. Wait a minute and try again.');
+  return r;
+}
+
+let icePromise: Promise<{ servers: RTCIceServer[]; relay: string | null }> | null = null;
+
+/** STUN plus a TURN relay if the server has one configured. Fetched once per page load. */
+export function getIce(): Promise<{ servers: RTCIceServer[]; relay: string | null }> {
+  icePromise ??= call('/api/ice')
+    .then((r) => {
+      const list = r.json && Array.isArray(r.data.iceServers) ? (r.data.iceServers as RTCIceServer[]) : STUN;
+      return { servers: list.length ? list : STUN, relay: (r.data.relay as string | null) ?? null };
+    })
+    .catch(() => ({ servers: STUN, relay: null }));
+  return icePromise;
+}
+
+export interface NetStatus {
+  store: 'ok' | 'missing' | 'error';
+  relay: string | null;
+  waiting: number;
+}
+
+/** What `netcheck` reports: is matchmaking storage reachable, is there a relay. */
+export async function netStatus(): Promise<NetStatus> {
+  const ice = await getIce();
+  let store: NetStatus['store'] = 'error';
+  let waiting = 0;
+  try {
+    const r = await call('/api/room?stats=1');
+    if (!r.json || r.data.configured === false) store = 'missing';
+    else if (r.status === 200) {
+      store = 'ok';
+      waiting = Number(r.data.waiting) || 0;
+    }
+  } catch {
+    store = 'error';
+  }
+  return { store, relay: ice.relay, waiting };
+}
+
+// ---------------------------------------------------------------- WebRTC helpers
+
 /** Wait until ICE gathering finishes (or a short timeout) so the SDP carries the candidates. */
-function gathered(pc: RTCPeerConnection, ms = 3000): Promise<void> {
+function gathered(pc: RTCPeerConnection, ms = 3500): Promise<void> {
   if (pc.iceGatheringState === 'complete') return Promise.resolve();
   return new Promise((resolve) => {
     const done = () => {
@@ -98,13 +166,13 @@ function gathered(pc: RTCPeerConnection, ms = 3000): Promise<void> {
   });
 }
 
+const blocked = () =>
+  new NetError("Couldn't connect. One of your networks blocks direct play and no relay is set up (see docs/ONLINE_SETUP.md).");
+
 function opened(ch: RTCDataChannel, signal?: AbortSignal): Promise<void> {
   if (ch.readyState === 'open') return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new NetError("Couldn't connect directly. One of your networks may block peer-to-peer play.")),
-      CONNECT_TIMEOUT_MS,
-    );
+    const t = setTimeout(() => reject(blocked()), CONNECT_TIMEOUT_MS);
     ch.onopen = () => {
       clearTimeout(t);
       resolve();
@@ -125,74 +193,126 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     });
   });
 
-export async function hostRoom(opts: { onCode(code: string): void; onStatus(text: string): void; signal: AbortSignal }): Promise<PeerLink> {
+function needRtc() {
   if (typeof RTCPeerConnection === 'undefined') throw new NetError('This browser does not support online play.');
-  const pc = new RTCPeerConnection({ iceServers: ICE });
-  const ch = pc.createDataChannel('sssnake', { ordered: true });
-  let code = '';
-  try {
-    await pc.setLocalDescription(await pc.createOffer());
-    opts.onStatus('gathering network routes...');
-    await gathered(pc);
-    const created = await api('POST', { action: 'create', offer: pc.localDescription?.sdp });
-    if (created.status !== 200 || typeof created.data.code !== 'string') throw new NetError('Could not create a room.');
-    code = created.data.code;
-    opts.onCode(code);
-
-    const deadline = Date.now() + ROOM_LIFETIME_MS;
-    for (;;) {
-      if (Date.now() > deadline) throw new NetError('Nobody joined within 10 minutes. The room has expired.');
-      await sleep(POLL_MS, opts.signal);
-      const got = await api('GET', undefined, code);
-      if (got.status === 404) throw new NetError('The room expired.');
-      if (typeof got.data.answer === 'string') {
-        opts.onStatus('opponent found, connecting...');
-        await pc.setRemoteDescription({ type: 'answer', sdp: got.data.answer });
-        break;
-      }
-    }
-    await opened(ch, opts.signal);
-    void api('POST', { action: 'close', code }).catch(() => {});
-    return new PeerLink(pc, ch);
-  } catch (err) {
-    pc.close();
-    if (code) void api('POST', { action: 'close', code }).catch(() => {});
-    throw err;
-  }
 }
 
-export async function joinRoom(rawCode: string, opts: { onStatus(text: string): void; signal: AbortSignal }): Promise<PeerLink> {
-  if (typeof RTCPeerConnection === 'undefined') throw new NetError('This browser does not support online play.');
-  const code = rawCode.trim().toUpperCase();
-  if (!/^[A-HJ-NP-Z2-9]{4}$/.test(code)) throw new NetError('Codes are 4 characters, like K7QX.');
-  const got = await api('GET', undefined, code);
-  if (got.status === 404) throw new NetError(`No room ${code}. Codes expire after 10 minutes.`);
-  if (got.status !== 200 || typeof got.data.offer !== 'string') throw new NetError('Could not read that room.');
-  if (got.data.answer) throw new NetError('That room is already full.');
+async function makeOffer(onStatus: (s: string) => void) {
+  const ice = await getIce();
+  const pc = new RTCPeerConnection({ iceServers: ice.servers });
+  const ch = pc.createDataChannel('sssnake', { ordered: true });
+  await pc.setLocalDescription(await pc.createOffer());
+  onStatus('gathering network routes...');
+  await gathered(pc);
+  return { pc, ch, sdp: pc.localDescription?.sdp ?? '' };
+}
 
-  const pc = new RTCPeerConnection({ iceServers: ICE });
+/** Host side: poll the room until a guest answers, then wait for the channel to open. */
+async function awaitGuest(pc: RTCPeerConnection, ch: RTCDataChannel, code: string, opts: { onStatus(s: string): void; signal: AbortSignal }) {
+  const deadline = Date.now() + ROOM_LIFETIME_MS;
+  for (;;) {
+    if (Date.now() > deadline) throw new NetError('Nobody joined within 10 minutes. The room has expired.');
+    await sleep(POLL_MS, opts.signal);
+    const got = await room('GET', undefined, code);
+    if (got.status === 404) throw new NetError('The room expired.');
+    if (typeof got.data.answer === 'string') {
+      opts.onStatus('opponent found, connecting...');
+      await pc.setRemoteDescription({ type: 'answer', sdp: got.data.answer });
+      break;
+    }
+  }
+  await opened(ch, opts.signal);
+  void room('POST', { action: 'close', code }).catch(() => {});
+  return new PeerLink(pc, ch);
+}
+
+/** Guest side: answer a host's offer and wait for their channel. */
+async function answer(code: string, offer: string, opts: { onStatus(s: string): void; signal: AbortSignal }) {
+  const ice = await getIce();
+  const pc = new RTCPeerConnection({ iceServers: ice.servers });
   try {
     const channel = new Promise<RTCDataChannel>((resolve) => {
       pc.ondatachannel = (e) => resolve(e.channel);
     });
-    await pc.setRemoteDescription({ type: 'offer', sdp: got.data.offer });
+    await pc.setRemoteDescription({ type: 'offer', sdp: offer });
     await pc.setLocalDescription(await pc.createAnswer());
     opts.onStatus('gathering network routes...');
     await gathered(pc);
-    const sent = await api('POST', { action: 'answer', code, answer: pc.localDescription?.sdp });
+    const sent = await room('POST', { action: 'answer', code, answer: pc.localDescription?.sdp });
     if (sent.status === 409) throw new NetError('That room is already full.');
+    if (sent.status === 404) throw new NetError('That room just expired.');
     if (sent.status !== 200) throw new NetError('Could not join that room.');
-    opts.onStatus('connecting to host...');
+    opts.onStatus('connecting...');
     const ch = await Promise.race([
       channel,
       sleep(CONNECT_TIMEOUT_MS, opts.signal).then(() => {
-        throw new NetError("Couldn't connect directly. One of your networks may block peer-to-peer play.");
+        throw blocked();
       }),
     ]);
     await opened(ch, opts.signal);
     return new PeerLink(pc, ch);
   } catch (err) {
     pc.close();
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------- public entry points
+
+export async function hostRoom(opts: { onCode(code: string): void; onStatus(text: string): void; signal: AbortSignal }): Promise<PeerLink> {
+  needRtc();
+  const { pc, ch, sdp } = await makeOffer(opts.onStatus);
+  let code = '';
+  try {
+    const created = await room('POST', { action: 'create', offer: sdp });
+    if (created.status !== 200 || typeof created.data.code !== 'string') throw new NetError('Could not create a room.');
+    code = created.data.code;
+    opts.onCode(code);
+    return await awaitGuest(pc, ch, code, opts);
+  } catch (err) {
+    pc.close();
+    if (code) void room('POST', { action: 'close', code }).catch(() => {});
+    throw err;
+  }
+}
+
+export async function joinRoom(rawCode: string, opts: { onStatus(text: string): void; signal: AbortSignal }): Promise<PeerLink> {
+  needRtc();
+  const code = rawCode.trim().toUpperCase();
+  if (!/^[A-HJ-NP-Z2-9]{4}$/.test(code)) throw new NetError('Codes are 4 characters, like K7QX.');
+  const got = await room('GET', undefined, code);
+  if (got.status === 404) throw new NetError(`No room ${code}. Codes expire after 10 minutes.`);
+  if (got.status !== 200 || typeof got.data.offer !== 'string') throw new NetError('Could not read that room.');
+  if (got.data.answer) throw new NetError('That room is already full.');
+  return answer(code, got.data.offer, opts);
+}
+
+/** Public matchmaking: join whoever is waiting, or wait in the queue yourself. */
+export async function quickMatch(opts: {
+  onStatus(text: string): void;
+  onWaiting(): void;
+  signal: AbortSignal;
+}): Promise<{ link: PeerLink; role: 'host' | 'guest' }> {
+  needRtc();
+  const { pc, ch, sdp } = await makeOffer(opts.onStatus);
+  let code = '';
+  try {
+    const res = await room('POST', { action: 'quick', offer: sdp });
+    if (res.status !== 200 || typeof res.data.code !== 'string') throw new NetError('Matchmaking is busy. Try again.');
+    if (res.data.role === 'guest' && typeof res.data.offer === 'string') {
+      // Someone else's room: never close it from here.
+      pc.close();
+      opts.onStatus('found an opponent, connecting...');
+      const link = await answer(res.data.code, res.data.offer, opts);
+      return { link, role: 'guest' };
+    }
+    code = res.data.code;
+    opts.onWaiting();
+    const link = await awaitGuest(pc, ch, code, opts);
+    return { link, role: 'host' };
+  } catch (err) {
+    pc.close();
+    if (code) void room('POST', { action: 'close', code }).catch(() => {});
     throw err;
   }
 }

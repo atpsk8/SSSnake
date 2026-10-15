@@ -4,6 +4,7 @@
 
 const strings = new Map(); // key -> { value, expires }
 const zsets = new Map(); // key -> [{ score, member }]
+const lists = new Map(); // key -> string[]
 
 const alive = (key) => {
   const e = strings.get(key);
@@ -27,7 +28,25 @@ function exec([cmd, key, ...args]) {
       return 'OK';
     }
     case 'DEL':
-      return strings.delete(key) || zsets.delete(key) ? 1 : 0;
+      return strings.delete(key) || zsets.delete(key) || lists.delete(key) ? 1 : 0;
+    case 'RPUSH': {
+      const l = lists.get(key) ?? [];
+      l.push(...args.map(String));
+      lists.set(key, l);
+      return l.length;
+    }
+    case 'LPOP': {
+      const l = lists.get(key);
+      return l && l.length ? l.shift() : null;
+    }
+    case 'LLEN':
+      return lists.get(key)?.length ?? 0;
+    case 'LREM': {
+      const l = lists.get(key) ?? [];
+      const before = l.length;
+      lists.set(key, l.filter((v) => v !== String(args[1])));
+      return before - lists.get(key).length;
+    }
     case 'INCR': {
       const e = alive(key);
       const n = Number(e?.value ?? 0) + 1;
@@ -35,6 +54,7 @@ function exec([cmd, key, ...args]) {
       return n;
     }
     case 'EXPIRE': {
+      if (lists.has(key)) return 1;
       const e = alive(key);
       if (!e) return 0;
       if (String(args[1] ?? '').toUpperCase() === 'NX' && e.expires) return 0;

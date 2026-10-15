@@ -1,6 +1,6 @@
 import type { PaletteId } from './storage';
 
-export type ThemeId = 'terminal' | 'nokia' | 'gameboy' | 'paper' | 'minimal';
+export type ThemeId = 'neo' | 'terminal' | 'nokia' | 'gameboy' | 'paper' | 'minimal';
 
 /** Canvas colours. "fg" is the main ink, "bright" the strongest, "faint" the weakest. */
 export interface Palette {
@@ -83,6 +83,32 @@ const TERMINAL: Record<PaletteId, Palette> = {
 const PIXEL = '"Silkscreen", "VT323", ui-monospace, monospace';
 
 export const THEMES: Record<ThemeId, ThemeDef> = {
+  // 3D theme. This 2D definition is only used by the editor and as a fallback without WebGL.
+  neo: {
+    id: 'neo',
+    name: 'neo',
+    desc: '3D: glossy neon snakes, reflective arena, bloom, cinematic camera (set quality high|low)',
+    family: 'soft',
+    font: '"Space Grotesk", system-ui, sans-serif',
+    display: '"Space Grotesk", system-ui, sans-serif',
+    gap: 0,
+    background: 'subtle',
+    wallGlyph: false,
+    pixelFood: false,
+    palette: () => ({
+      bg: '#0b0f1a',
+      fg: '#38e1ff',
+      bright: '#e6f7ff',
+      dim: '#3a4a63',
+      faint: '#141b2b',
+      alt: '#ff4fa3',
+      accent: '#ff4fa3',
+      gold: '#ffd166',
+      danger: '#ff5470',
+      rival: '#a78bfa',
+      lines: '#1a2236',
+    }),
+  },
   terminal: {
     id: 'terminal',
     name: 'terminal',
@@ -198,4 +224,4 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
   },
 };
 
-export const THEME_ORDER: ThemeId[] = ['terminal', 'nokia', 'gameboy', 'paper', 'minimal'];
+export const THEME_ORDER: ThemeId[] = ['neo', 'terminal', 'nokia', 'gameboy', 'paper', 'minimal'];

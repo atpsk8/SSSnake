@@ -1,0 +1,172 @@
+import type { Game, Player } from './game/engine';
+import { Rng } from './game/rng';
+import { DIRS, DIR_LIST, H, OPPOSITE, W, add, idx, inBounds, manhattan, wrapPos, type Dir, type Vec } from './game/types';
+import type { Input } from './replay';
+
+export type Difficulty = 'easy' | 'normal' | 'hard';
+export type Personality = 'hunter' | 'collector' | 'trickster';
+
+const REACTION_MS: Record<Difficulty, number> = { easy: 240, normal: 120, hard: 40 };
+const NOISE: Record<Difficulty, number> = { easy: 3.5, normal: 1.2, hard: 0.15 };
+const BLUNDER: Record<Difficulty, number> = { easy: 0.12, normal: 0.03, hard: 0 };
+
+/**
+ * CPU opponent for Versus. Each decision scores the possible moves: deadly moves are out,
+ * moves into pockets smaller than its own body are heavily penalised (flood fill), and the
+ * rest are ranked by distance to a target that depends on the personality. Difficulty sets
+ * reaction time, noise and the occasional blunder.
+ */
+export class Bot {
+  private wait = 0;
+  private rng: Rng;
+  private holding = false;
+
+  constructor(
+    readonly pid: number,
+    readonly difficulty: Difficulty,
+    readonly personality: Personality,
+    seed: number,
+  ) {
+    this.rng = new Rng(seed ^ 0x5eed);
+  }
+
+  get label() {
+    return `cpu ${this.personality} (${this.difficulty})`;
+  }
+
+  /** Inputs to send this frame. */
+  think(g: Game, dtMs: number): Input[] {
+    const me = g.players[this.pid];
+    if (!me?.alive || g.status !== 'playing' || g.banner) return [];
+    this.wait -= dtMs;
+    if (this.wait > 0) return [];
+    this.wait = REACTION_MS[this.difficulty] * (0.7 + this.rng.next() * 0.6);
+
+    const out: Input[] = [];
+    const opp = g.players.find((p) => p.id !== this.pid && p.alive);
+    const blocked = this.blockedMap(g, me);
+    const target = this.target(g, me, opp);
+
+    let best: { d: Dir; score: number } | null = null;
+    const facing = me.queue.length ? me.queue[me.queue.length - 1] : me.dir;
+    for (const d of DIR_LIST) {
+      if (d === OPPOSITE[facing]) continue;
+      const c = this.step(g, me.body[0], d);
+      let score: number;
+      if (!c || blocked[idx(c)]) score = -1e9;
+      else {
+        const space = this.flood(g, c, blocked, me.body.length + 20);
+        score = space < me.body.length ? -1e6 + space : 0;
+        score += target ? -manhattan(c, target) : 0;
+        score += Math.min(space, 60) * 0.03;
+        if (d === facing) score += 0.4;
+        score += (this.rng.next() - 0.5) * NOISE[this.difficulty];
+      }
+      if (!best || score > best.score) best = { d, score };
+    }
+    if (best && this.rng.next() < BLUNDER[this.difficulty]) {
+      // A human-ish mistake: pick any non-reverse direction.
+      const opts = DIR_LIST.filter((d) => d !== OPPOSITE[facing]);
+      best = { d: this.rng.pick(opts), score: 0 };
+    }
+    if (best && best.d !== facing) out.push({ p: this.pid, t: 'turn', d: best.d });
+
+    // Shed to wall off a chasing opponent (trickster) or to escape a tight spot.
+    if (opp && g.canShedP(me)) {
+      const tail = me.body[me.body.length - 1];
+      const chasing = manhattan(opp.body[0], tail) <= 3;
+      const cramped = best !== null && best.score < -1e5;
+      if ((this.personality === 'trickster' && chasing && this.rng.next() < 0.5) || (cramped && this.rng.next() < 0.6)) {
+        out.push({ p: this.pid, t: 'shed' });
+      }
+    }
+
+    // Surge toward food on a clear straight line (normal / hard).
+    const wantSurge =
+      this.difficulty !== 'easy' &&
+      !!target &&
+      me.meter > 0.35 &&
+      best !== null &&
+      best.score > -1e5 &&
+      (me.body[0].x === target.x || me.body[0].y === target.y);
+    if (wantSurge !== this.holding) {
+      this.holding = wantSurge;
+      out.push({ p: this.pid, t: 'hold', on: wantSurge });
+    }
+    return out;
+  }
+
+  private target(g: Game, me: Player, opp: Player | undefined): Vec | null {
+    const head = me.body[0];
+    const foods = g.pickups.filter((p) => p.kind !== 'rot');
+    const nearest = foods.reduce<Vec | null>((b, p) => (!b || manhattan(p.pos, head) < manhattan(b, head) ? p.pos : b), null);
+    if (opp && this.personality === 'hunter' && me.body.length >= opp.body.length - 2) {
+      // Aim a couple of cells ahead of the opponent to cut them off.
+      const d = DIRS[opp.dir];
+      const ahead = { x: opp.body[0].x + d.x * 3, y: opp.body[0].y + d.y * 3 };
+      if (inBounds(ahead) && manhattan(ahead, head) < 12) return ahead;
+    }
+    if (opp && this.personality === 'trickster' && nearest && manhattan(nearest, opp.body[0]) < manhattan(nearest, head)) {
+      // Losing the race for food: hang around the opponent's path instead.
+      return opp.body[Math.min(2, opp.body.length - 1)];
+    }
+    return nearest;
+  }
+
+  private step(g: Game, from: Vec, d: Dir): Vec | null {
+    let c = add(from, DIRS[d]);
+    if (!inBounds(c)) {
+      if (!g.wraps) return null;
+      c = wrapPos(c);
+    }
+    return g.portalExit(c) ?? c;
+  }
+
+  private blockedMap(g: Game, me: Player): Uint8Array {
+    const b = new Uint8Array(W * H);
+    for (let i = 0; i < b.length; i++) b[i] = g.solid[i];
+    for (const w of g.shedWalls) b[idx(w.pos)] = 1;
+    for (const m of g.mines) b[idx(m.pos)] = 1;
+    for (const c of g.bossCells()) b[idx(c)] = 1;
+    for (const p of g.players) {
+      if (!p.alive) continue;
+      // Our own tail tip moves out of the way.
+      const len = p === me ? p.body.length - 1 : p.body.length;
+      for (let i = 0; i < len; i++) b[idx(p.body[i])] = 1;
+      // Avoid head-on collisions with a bigger snake.
+      if (p !== me && p.body.length >= me.body.length) {
+        for (const d of DIR_LIST) {
+          const c = add(p.body[0], DIRS[d]);
+          if (inBounds(c)) b[idx(c)] = 1;
+        }
+      }
+    }
+    if (g.rival) for (const s of g.rival.body) b[idx(s)] = 1;
+    return b;
+  }
+
+  private flood(g: Game, start: Vec, blocked: Uint8Array, limit: number): number {
+    const seen = new Uint8Array(W * H);
+    const stack = [start];
+    seen[idx(start)] = 1;
+    let n = 0;
+    while (stack.length && n < limit) {
+      const c = stack.pop()!;
+      n++;
+      for (const d of DIR_LIST) {
+        let nx = add(c, DIRS[d]);
+        if (!inBounds(nx)) {
+          if (!g.wraps) continue;
+          nx = wrapPos(nx);
+        }
+        const i = idx(nx);
+        if (seen[i] || blocked[i]) continue;
+        seen[i] = 1;
+        stack.push(nx);
+      }
+    }
+    return n;
+  }
+}
+
+export const PERSONALITIES: Personality[] = ['hunter', 'collector', 'trickster'];

@@ -73,7 +73,7 @@ export function parseRange(flat) {
   for (let i = 0; i + 1 < flat.length; i += 2) {
     try {
       const m = JSON.parse(flat[i]);
-      rows.push({ name: m.n, level: m.l, cls: m.c, date: m.d, score: Number(flat[i + 1]) });
+      rows.push({ name: m.n, level: m.l, cls: m.c, date: m.d, id: m.r, score: Number(flat[i + 1]) });
     } catch {
       /* skip malformed members */
     }

@@ -13,11 +13,14 @@ export interface AppCtx {
   data: SaveData;
   save(): void;
   applySettings(): void;
-  start(mode: ModeId, opts?: { seed?: number; level?: LevelData; challenge?: Challenge | null }): void;
+  start(mode: ModeId, opts?: { seed?: number; level?: LevelData; challenge?: Challenge | null; cpu?: 'easy' | 'normal' | 'hard' }): void;
   openEditor(level?: LevelData): void;
   openSettings(): void;
   invite(t: Terminal, signal: AbortSignal): Promise<void>;
   join(code: string, t: Terminal, signal: AbortSignal): Promise<void>;
+  quick(t: Terminal, signal: AbortSignal): Promise<void>;
+  watch(arg: string, t: Terminal): Promise<void>;
+  netcheck(t: Terminal): Promise<void>;
   pendingChallenge(): Challenge | null;
   acceptChallenge(): void;
   declineChallenge(): void;
@@ -63,6 +66,22 @@ export function buildCommands(app: AppCtx): Command[] {
         if (!['soft', 'full', 'off'].includes(v)) return t.print('usage: set crt soft|full|off', 'err');
         s().crt = v as 'soft' | 'full' | 'off';
         break;
+      case 'quality':
+        if (v !== 'high' && v !== 'low') return t.print('usage: set quality high|low  (3D neo theme)', 'err');
+        s().quality = v;
+        break;
+      case 'haptics': {
+        const b = bool(v);
+        if (b === null) return t.print('usage: set haptics on|off', 'err');
+        s().haptics = b;
+        break;
+      }
+      case 'deathcam': {
+        const b = bool(v);
+        if (b === null) return t.print('usage: set deathcam on|off', 'err');
+        s().deathcam = b;
+        break;
+      }
       case 'motion':
         if (!['full', 'reduced'].includes(v)) return t.print('usage: set motion full|reduced', 'err');
         s().reducedMotion = v === 'reduced';
@@ -83,11 +102,14 @@ export function buildCommands(app: AppCtx): Command[] {
     const st = s();
     t.table([
       ['name', st.name || '(not set)', 'set name <name>'],
-      ['theme', st.theme, 'theme terminal|nokia|gameboy|paper|minimal'],
+      ['theme', st.theme, 'theme neo|terminal|nokia|gameboy|paper|minimal'],
       ['color', st.palette, 'set color green|amber|white  (terminal theme)'],
       ['crt', st.crt, 'set crt soft|full|off  (terminal theme)'],
       ['sound', st.sound ? 'on' : 'off', 'set sound on|off'],
       ['music', st.music ? 'on' : 'off', 'set music on|off'],
+      ['quality', st.quality, 'set quality high|low  (3D neo theme: bloom, shadows)'],
+      ['haptics', st.haptics ? 'on' : 'off', 'set haptics on|off  (phone vibration, controller rumble)'],
+      ['deathcam', st.deathcam ? 'on' : 'off', 'set deathcam on|off  (instant replay when you die)'],
       ['motion', st.reducedMotion ? 'reduced' : 'full', 'set motion full|reduced'],
       ['touch', st.touch, 'set touch swipe|dpad'],
     ]);
@@ -109,7 +131,8 @@ export function buildCommands(app: AppCtx): Command[] {
         }
         t.print('GAME', 'title');
         t.print('  {play} [mode]      arcade (default), classic, daily, zen, rhythm');
-        t.print('  {versus}           two players on this device');
+        t.print('  {versus}           two players on this device;  {cpu} to play the computer');
+        t.print('  {match}            play a random opponent online');
         t.print('  {invite}           host an online match and get a code');
         t.print('  join <code>      join a friend\'s online match');
         t.print('  {snake} [type]     list or pick your snake type');
@@ -117,11 +140,11 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('PROFILE', 'title');
         t.print('  {scores} [board]   leaderboards: arcade, daily, classic, rhythm');
         t.print('  {trophies}         achievements and unlocks');
-        t.print('  {theme} [name]     change the look: terminal, nokia, gameboy, paper, minimal');
+        t.print('  {theme} [name]     change the look: neo (3D), terminal, nokia, gameboy, paper, minimal');
         t.print('  {skin} [name]      snake skins');
         t.print('  {set} [key value]  settings (name, color, crt, sound, music, motion, touch)');
         t.print('SYSTEM', 'title');
-        t.print('  {controls}  {clear}  {about}', 'out');
+        t.print('  {netcheck}  {controls}  {clear}  {about}', 'out');
         t.print('tip: Tab completes, Up/Down recalls history, Esc cancels.', 'dim');
       },
     },
@@ -151,10 +174,28 @@ export function buildCommands(app: AppCtx): Command[] {
     {
       name: 'versus',
       aliases: ['vs', 'local'],
-      desc: 'two players on one device (best of three)',
-      run(_a, t) {
-        t.print('P1: WASD, Q shed, E ability   P2: arrows, / shed, . ability', 'dim');
+      usage: 'versus [cpu [easy|normal|hard]]',
+      desc: 'two players on one device, or you against the cpu (best of three)',
+      run(args, t) {
+        if (args[0] === 'cpu' || args[0] === 'bot') {
+          const d = (args[1] ?? 'normal').toLowerCase();
+          if (!['easy', 'normal', 'hard'].includes(d)) return t.print('usage: versus cpu easy|normal|hard', 'err');
+          t.print(`you vs cpu (${d}). arrows/WASD to move, space shed, shift ability.`, 'dim');
+          return app.start('versus', { cpu: d as 'easy' | 'normal' | 'hard' });
+        }
+        t.print('P1: WASD, Q shed, E ability   P2: arrows, / shed, . ability   (or: {versus cpu})', 'dim');
         app.start('versus');
+      },
+    },
+    {
+      name: 'cpu',
+      aliases: ['bot'],
+      usage: 'cpu [easy|normal|hard]',
+      desc: 'play versus against the computer',
+      run(args, t) {
+        const d = (args[0] ?? 'normal').toLowerCase();
+        if (!['easy', 'normal', 'hard'].includes(d)) return t.print('usage: cpu easy|normal|hard', 'err');
+        app.start('versus', { cpu: d as 'easy' | 'normal' | 'hard' });
       },
     },
     {
@@ -162,6 +203,28 @@ export function buildCommands(app: AppCtx): Command[] {
       aliases: ['host'],
       desc: 'host an online match; share the code with a friend',
       run: (_a, t, signal) => app.invite(t, signal),
+    },
+    {
+      name: 'match',
+      aliases: ['quick', 'findmatch', 'online'],
+      desc: 'play a random opponent online',
+      run: (_a, t, signal) => app.quick(t, signal),
+    },
+    {
+      name: 'watch',
+      aliases: ['replay'],
+      usage: 'watch <id|last>',
+      desc: 'watch a replay: your last run, or a leaderboard run',
+      run(args, t) {
+        if (!args[0]) return t.print('usage: watch last   (or click "watch" next to a score in {scores})', 'err');
+        return app.watch(args[0], t);
+      },
+    },
+    {
+      name: 'netcheck',
+      aliases: ['ping', 'status'],
+      desc: 'check that online play is set up',
+      run: (_a, t) => app.netcheck(t),
     },
     {
       name: 'join',
@@ -233,11 +296,21 @@ export function buildCommands(app: AppCtx): Command[] {
         if (!BOARDS[which]) return t.print(`boards: ${Object.keys(BOARDS).join(', ')}`, 'err');
         const board = which === 'daily' ? `daily:${app.dailyKey()}` : which;
         const localOnly = args.includes('--local') || args.includes('-l');
-        const rows = (list: { name: string; score: number; level: number; cls: SnakeClass }[]) => {
+        const rows = (list: { name: string; score: number; level: number; cls: SnakeClass; id?: string }[]) => {
           if (!list.length) return t.print('  (no scores yet)', 'dim');
-          t.table(
-            list.map((r, i) => [`${String(i + 1).padStart(2)}.`, String(r.name).slice(0, 16), CLASSES[r.cls]?.name.toLowerCase() ?? '', r.level > 1 ? `L${r.level}` : '', r.score.toLocaleString().padStart(9)]),
-          );
+          const cells = list.map((r, i) => [
+            `${String(i + 1).padStart(2)}.`,
+            String(r.name).slice(0, 16),
+            CLASSES[r.cls]?.name.toLowerCase() ?? '',
+            r.level > 1 ? `L${r.level}` : '',
+            r.score.toLocaleString().padStart(9),
+          ]);
+          const widths = cells[0].map((_, c) => Math.max(...cells.map((row) => row[c].length)));
+          cells.forEach((row, i) => {
+            const id = list[i].id;
+            const line = row.map((c, k) => c.padEnd(widths[k])).join('  ');
+            t.print(id && /^[a-z0-9]{6,12}$/.test(id) ? `${line}  {watch|watch ${id}}` : line);
+          });
         };
         if (!localOnly) {
           t.print(`querying global ${board} ...`, 'dim');
@@ -326,7 +399,7 @@ export function buildCommands(app: AppCtx): Command[] {
     {
       name: 'theme',
       aliases: ['themes', 'look'],
-      usage: 'theme [terminal|nokia|gameboy|paper|minimal]',
+      usage: 'theme [neo|terminal|nokia|gameboy|paper|minimal]',
       desc: 'change the whole look of the game',
       run(args, t) {
         if (args[0]) {
@@ -352,6 +425,8 @@ export function buildCommands(app: AppCtx): Command[] {
       run(_a, t) {
         t.print('KEYBOARD', 'title');
         t.print('  arrows/WASD turn   space shed   shift/E ability   P/esc pause   enter retry');
+        t.print('GAMEPAD', 'title');
+        t.print('  d-pad/stick turn   A shed   B/RB/RT ability   start pause');
         t.print('TOUCH', 'title');
         t.print('  swipe turn   two-finger tap shed   double-tap or hold ability');
         t.print('MECHANICS', 'title');

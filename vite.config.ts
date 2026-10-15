@@ -12,7 +12,7 @@ function devApi(): Plugin {
       if (process.env.VITEST) return;
       process.env.SSSNAKE_DEV_MEMORY = '1';
       server.middlewares.use(async (req, res, next) => {
-        const m = /^\/api\/(scores|room)(?:\?|$)/.exec(req.url ?? '');
+        const m = /^\/api\/(scores|room|ice|replay)(?:\?|$)/.exec(req.url ?? '');
         if (!m) return next();
         try {
           const mod = (await server.ssrLoadModule(`/api/${m[1]}.js`)) as Record<string, (r: Request) => Promise<Response>>;
@@ -43,5 +43,6 @@ function devApi(): Plugin {
 
 export default defineConfig({
   plugins: [devApi()],
-  build: { target: 'es2022' },
+  // The 3D renderer (three.js) is a lazy chunk of ~570 kB, only loaded for the neo theme.
+  build: { target: 'es2022', chunkSizeWarningLimit: 700 },
 });

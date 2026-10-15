@@ -1,5 +1,9 @@
 import './style.css';
 import { Sound } from './audio';
+import { Bot, PERSONALITIES, type Difficulty } from './bot';
+import { ClipRecorder, clipSupported, deliverClip } from './clip';
+import { Gamepads, Haptics, type PadHandlers } from './feel';
+import { Music } from './music';
 import { buildCommands } from './commands';
 import { Editor } from './editor';
 import { CLASSES, CLASS_ORDER } from './game/classes';
@@ -8,21 +12,23 @@ import { MODIFIER_INFO, type LevelData } from './game/levels';
 import { MODES } from './game/modes';
 import { MUTATIONS } from './game/mutations';
 import { dailySeed, todayKey } from './game/rng';
-import type { DeathCause, Dir, EffectKind, ModeId, MutationId, SnakeClass } from './game/types';
+import type { DeathCause, Dir, EffectKind, GameEvent, ModeId, MutationId, SnakeClass, Vec } from './game/types';
 import { decodeGhost, encodeGhost, ghostBodyAt, type Ghost } from './ghost';
-import { bindInput, pressButton } from './input';
-import { globalBoard, submitGlobal } from './leaderboard';
+import { bindInput, pressButton, type InputHandlers } from './input';
+import { fetchReplay, globalBoard, submitGlobal } from './leaderboard';
 import type { Lockstep, NetInput } from './net/lockstep';
 import { OnlineMatch } from './net/online';
-import { NetError, hostRoom, joinRoom, type PeerLink } from './net/peer';
+import { NetError, hostRoom, joinRoom, netStatus, quickMatch, type PeerLink } from './net/peer';
 import { CLASS_UNLOCK, SKINS, evaluate, isUnlocked, type RunContext } from './progress';
 import { POWER_LABEL, Renderer } from './render';
 import { THEMES } from './themes';
 import { challengeUrl, readChallengeFromHash, shareLink, type Challenge } from './share';
-import { addLocalScore, load, save, type SaveData } from './storage';
+import { decodeReplay, encodeReplay, gameFor, type Input } from './replay';
+import { Runner } from './runner';
+import { addLocalScore, load, save, type SaveData, type SkinId } from './storage';
 import { Terminal } from './terminal';
 
-type Screen = 'term' | 'play' | 'pause' | 'over' | 'settings' | 'draft' | 'editor';
+type Screen = 'term' | 'play' | 'pause' | 'over' | 'settings' | 'draft' | 'editor' | 'replay';
 const OVERLAYS: Screen[] = ['term', 'pause', 'over', 'settings', 'draft'];
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -33,6 +39,22 @@ const sound = new Sound();
 const canvas = $<HTMLCanvasElement>('board');
 const stage = $('stage');
 const renderer = new Renderer(canvas);
+
+/** What the game loop draws through: the 2D renderer, or the 3D one for the neo theme. */
+interface View {
+  reset(): void;
+  handle(events: GameEvent[], game: Game): void;
+  draw(game: Game, dt: number): void;
+  ghost: Vec[] | null;
+  camera: { x: number; y: number; zoom: number } | null;
+  skin: SkinId;
+  reducedMotion: boolean;
+}
+type View3D = View & { setVisible(v: boolean): void; resize(w: number, h: number): void; dispose(): void; quality: 'high' | 'low' };
+let view: View = renderer;
+let view3d: View3D | null = null;
+let view3dLoading: Promise<void> | null = null;
+const canvas3d = $<HTMLCanvasElement>('board3d');
 
 let game: Game | null = null;
 let screen: Screen = 'term';
@@ -48,6 +70,29 @@ let ghost: Ghost | null = null;
 let versus = { wins: [0, 0], round: 1 };
 let matchOver = false;
 let lastBoard: string | null = null;
+
+// Local runs go through a fixed-step Runner so they can be replayed exactly.
+let runner: Runner | null = null;
+let lastReplay = '';
+let lastDeathPos: Vec | null = null;
+interface Playback {
+  runner: Runner;
+  endFrame: number;
+  kind: 'deathcam' | 'watch' | 'clip';
+  focus: Vec | null;
+  t: number;
+  /** Time spent zooming in (instant replays zoom toward the death). */
+  zt: number;
+  hold: number;
+  speed: number;
+  done: () => void;
+}
+let playback: Playback | null = null;
+let clip: ClipRecorder | null = null;
+let cpuBot: Bot | null = null;
+let music: Music | null = null;
+const haptics = new Haptics();
+const pads = new Gamepads();
 
 // Online Versus
 let online: OnlineMatch | null = null;
@@ -107,10 +152,13 @@ function applySettings() {
   renderer.setTheme(s.theme, s.palette);
   document.documentElement.dataset.theme = s.theme;
   loadThemeFonts();
+  syncView();
   renderer.reducedMotion = s.reducedMotion;
   renderer.skin = isUnlocked(data.achievements, SKINS[s.skin]?.unlock ?? null) ? s.skin : 'classic';
   sound.enabled = s.sound;
   sound.musicEnabled = s.music;
+  haptics.enabled = s.haptics;
+  if (!s.music) music?.stop();
   document.documentElement.dataset.palette = s.palette;
   document.documentElement.dataset.crt = s.crt;
   document.body.classList.toggle('reduced-motion', s.reducedMotion);
@@ -119,6 +167,54 @@ function applySettings() {
   else if (!s.music) sound.stopMusic();
   updatePrompt();
   syncSettingsForm();
+}
+
+function webglAvailable(): boolean {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl2') || c.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
+
+/** Pick the 2D or 3D view for the current theme/screen, loading three.js on first use. */
+function syncView() {
+  const s = data.settings;
+  const want3d = s.theme === 'neo' && screen !== 'editor';
+  if (want3d && view3d && view3d.quality !== s.quality) {
+    view3d.dispose();
+    view3d = null;
+  }
+  if (want3d && !view3d) {
+    if (!webglAvailable()) {
+      if (!view3dLoading) toast('3d unavailable', 'this browser has no webgl, so neo is drawn in 2d.');
+      view3dLoading = Promise.resolve();
+    } else if (!view3dLoading) {
+      view3dLoading = import('./render3d')
+        .then(({ Renderer3D }) => {
+          view3d = new Renderer3D(canvas3d, stage, data.settings.quality) as unknown as View3D;
+          layout();
+          syncView();
+        })
+        .catch(() => toast('3d unavailable', 'could not start the 3d renderer; using 2d.'))
+        .finally(() => {
+          view3dLoading = null;
+        });
+    }
+  }
+  const use3d = want3d && !!view3d;
+  if (view3d) view3d.setVisible(use3d);
+  canvas.style.display = use3d ? 'none' : 'block';
+  const next: View = use3d ? view3d! : renderer;
+  if (next !== view) {
+    next.ghost = null;
+    next.camera = null;
+    next.reset();
+    view = next;
+  }
+  view.skin = renderer.skin;
+  view.reducedMotion = s.reducedMotion;
 }
 
 /** Canvas text needs the theme's fonts loaded; redraw the cached board once they are. */
@@ -133,6 +229,9 @@ function syncSettingsForm() {
   $<HTMLSelectElement>('optTheme').value = data.settings.theme;
   $<HTMLSelectElement>('optPalette').value = data.settings.palette;
   $<HTMLSelectElement>('optCrt').value = data.settings.crt;
+  $<HTMLSelectElement>('optQuality').value = data.settings.quality;
+  $<HTMLInputElement>('optDeathcam').checked = data.settings.deathcam;
+  $<HTMLInputElement>('optHaptics').checked = data.settings.haptics;
   $<HTMLSelectElement>('optTouch').value = data.settings.touch;
   $<HTMLInputElement>('optMotion').checked = data.settings.reducedMotion;
   $<HTMLInputElement>('optSound').checked = data.settings.sound;
@@ -147,6 +246,9 @@ function bindSettings() {
       theme: $<HTMLSelectElement>('optTheme').value as SaveData['settings']['theme'],
       palette: $<HTMLSelectElement>('optPalette').value as SaveData['settings']['palette'],
       crt: $<HTMLSelectElement>('optCrt').value as SaveData['settings']['crt'],
+      quality: $<HTMLSelectElement>('optQuality').value as SaveData['settings']['quality'],
+      deathcam: $<HTMLInputElement>('optDeathcam').checked,
+      haptics: $<HTMLInputElement>('optHaptics').checked,
       touch: $<HTMLSelectElement>('optTouch').value as SaveData['settings']['touch'],
       reducedMotion: $<HTMLInputElement>('optMotion').checked,
       sound: $<HTMLInputElement>('optSound').checked,
@@ -156,7 +258,7 @@ function bindSettings() {
     save(data);
     applySettings();
   };
-  for (const id of ['optTheme', 'optPalette', 'optCrt', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
+  for (const id of ['optTheme', 'optPalette', 'optCrt', 'optQuality', 'optDeathcam', 'optHaptics', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
   $('settingsDone').addEventListener('click', () => show(settingsReturn));
 }
 
@@ -176,15 +278,17 @@ function show(next: Screen) {
   for (const id of OVERLAYS) $(id).classList.toggle('hidden', id !== next);
   document.body.dataset.screen = next;
   document.body.classList.toggle('in-game', game !== null && next !== 'term');
+  syncView();
   if (next === 'editor') {
     document.body.classList.add('editing');
     renderer.reset();
     editor.open();
   }
+  $('replayTag').classList.toggle('hidden', next !== 'replay');
+  if (next !== 'replay') view.camera = null;
   if (next !== 'play') {
-    if (!online) {
-      game?.setHeld(0, false);
-      game?.setHeld(1, false);
+    if (!online && runner && game) {
+      for (const pl of game.players) if (pl.held) runner.input({ p: pl.id, t: 'hold', on: false });
     }
     sound.stopMusic();
   } else if (game?.mode.zen) sound.startMusic();
@@ -208,6 +312,7 @@ interface StartOpts {
   level?: LevelData;
   challenge?: Challenge | null;
   newMatch?: boolean;
+  cpu?: Difficulty;
 }
 let lastStart: { mode: ModeId; opts: StartOpts } = { mode: 'arcade', opts: {} };
 
@@ -237,7 +342,11 @@ function start(mode: ModeId, opts: StartOpts = {}) {
   const recordGhost = mode === 'daily' && !challenge;
   game = new Game({ mode, seed, classes: [selectedClass(), 'racer'], level: customLevel ?? undefined, record: recordGhost });
   ghost = recordGhost && data.ghosts[dailyKey] ? decodeGhost(data.ghosts[dailyKey]) : null;
-  renderer.reset();
+  runner = new Runner(game, { keyframes: true });
+  cpuBot = mode === 'versus' && opts.cpu ? new Bot(1, opts.cpu, PERSONALITIES[(game.seed >>> 3) % PERSONALITIES.length], game.seed) : null;
+  playback = null;
+  lastDeathPos = null;
+  view.reset();
   hudCache.clear();
   applyModeClasses(game);
   show('play');
@@ -254,7 +363,7 @@ function retry() {
   }
   if (game.mode.id === 'versus' && !matchOver) {
     versus.round++;
-    start('versus', { newMatch: false });
+    start('versus', { newMatch: false, cpu: lastStart.opts.cpu });
     return;
   }
   const keepEditor = fromEditor;
@@ -295,7 +404,8 @@ function openDraft() {
 function chooseDraft(i: number) {
   if (!game || screen !== 'draft') return;
   sound.ui();
-  game.chooseMutation(i);
+  if (runner) runner.input({ p: 0, t: 'draft', i });
+  else game.chooseMutation(i);
   hudCache.delete('mutations');
   show('play');
 }
@@ -350,6 +460,12 @@ function finish() {
   if (!game) return;
   const g = game;
   const mode = g.mode.id;
+  lastReplay =
+    runner && runner.game === g
+      ? encodeReplay(runner.replay({ mode, seed: g.seed, classes: g.players.map((p) => p.cls), level: customLevel ?? undefined }))
+      : '';
+  $('watchBtn').classList.toggle('hidden', !lastReplay);
+  $('clipBtn').classList.toggle('hidden', !lastReplay || !clipSupported());
   overAt = performance.now();
   resetOverScreen();
   $('shareBtn').classList.remove('hidden');
@@ -359,7 +475,7 @@ function finish() {
     const w = g.winner ?? -1;
     if (w >= 0) versus.wins[w]++;
     matchOver = versus.wins.some((n) => n >= 2);
-    finishVersus(g, ['P1', 'P2'], versus.wins, versus.round, matchOver, null);
+    finishVersus(g, cpuBot ? ['you', cpuBot.label] : ['P1', 'P2'], versus.wins, versus.round, matchOver, cpuBot ? 0 : null);
     if (matchOver && w >= 0) award({ mode, stats: g.stats, versusWin: true });
     show('over');
     return;
@@ -443,7 +559,7 @@ function startOnline(role: 'host' | 'guest', link: PeerLink) {
       customLevel = null;
       challenge = null;
       ghost = null;
-      renderer.reset();
+      view.reset();
       hudCache.clear();
       applyModeClasses(g);
       sound.unlock();
@@ -502,6 +618,31 @@ async function join(code: string, t: Terminal, signal: AbortSignal) {
   }
 }
 
+async function quick(t: Terminal, signal: AbortSignal) {
+  if (online) return t.print('already in a match.', 'err');
+  t.print('looking for an opponent...', 'dim');
+  try {
+    const { link, role } = await quickMatch({
+      signal,
+      onStatus: (s) => t.print(s, 'dim'),
+      onWaiting: () => t.print('nobody waiting yet. you are first in the queue... ({cancel} to stop)', 'dim'),
+    });
+    startOnline(role, link);
+  } catch (err) {
+    if (!signal.aborted) t.print((err as Error).message, 'err');
+  }
+}
+
+async function netcheck(t: Terminal) {
+  t.print('checking online services...', 'dim');
+  const st = await netStatus();
+  t.print(`matchmaking store .... ${st.store === 'ok' ? 'OK' : st.store === 'missing' ? 'NOT SET UP' : 'UNREACHABLE'}`, st.store === 'ok' ? 'ok' : 'err');
+  t.print(`relay (turn) ......... ${st.relay ? `OK (${st.relay})` : 'none: some strict networks will fail to connect'}`, st.relay ? 'ok' : 'dim');
+  t.print(`webrtc ............... ${typeof RTCPeerConnection !== 'undefined' ? 'OK' : 'NOT SUPPORTED'}`, typeof RTCPeerConnection !== 'undefined' ? 'ok' : 'err');
+  if (st.store === 'ok') t.print(`players waiting in {match}: ${st.waiting}`, 'dim');
+  if (st.store !== 'ok' || !st.relay) t.print('setup guide: docs/ONLINE_SETUP.md in the project.', 'dim');
+}
+
 function leaveOnline() {
   const o = online;
   online = null;
@@ -533,7 +674,7 @@ function updateHud(g: Game) {
   const me = online?.me ?? 0;
   const p = g.players[me];
   if (g.mode.id === 'versus') {
-    const names = online?.names ?? ['P1', 'P2'];
+    const names = online?.names ?? (cpuBot ? ['YOU', 'CPU'] : ['P1', 'P2']);
     const wins = online?.wins ?? versus.wins;
     setText('scoreLabel', `${names[0]} / ${names[1]}`);
     setText('score', `${g.players[0].score} / ${g.players[1].score}`);
@@ -608,11 +749,20 @@ function updateHud(g: Game) {
 function layout() {
   const rect = stage.getBoundingClientRect();
   renderer.resize(Math.max(120, Math.min(rect.width, rect.height)));
+  view3d?.resize(rect.width, rect.height);
 }
 
 function frame(now: number) {
+  step(now);
+  requestAnimationFrame(frame);
+}
+
+/** One frame of work (split out so dev tools can advance time deterministically). */
+function step(now: number) {
   const dt = Math.min(now - lastFrame, 100);
   lastFrame = now;
+  pads.poll(padHandlers);
+  updateMusic();
   if (screen === 'editor') {
     renderer.ghost = null;
     renderer.draw(editor.preview, dt);
@@ -622,7 +772,8 @@ function frame(now: number) {
     const events = game.drainEvents();
     if (events.length) {
       sound.handle(events);
-      renderer.handle(events, game);
+      view.handle(events, game);
+      afterEvents(events);
     }
     if (lock.desync && !desyncWarned) {
       desyncWarned = true;
@@ -632,29 +783,241 @@ function frame(now: number) {
       roundHandled = true;
       finishOnline();
     }
-    renderer.draw(game, dt);
+    view.draw(game, dt);
     updateHud(game);
+  } else if (screen === 'replay' && playback) {
+    tickPlayback(dt);
   } else if (game) {
     if (screen === 'play') {
-      game.update(dt);
+      if (cpuBot && runner) for (const i of cpuBot.think(game, dt)) runner.input(i);
+      if (runner) runner.tick(dt);
+      else game.update(dt);
       const events = game.drainEvents();
       if (events.length) {
+        for (const e of events) if (e.type === 'die') lastDeathPos = e.pos;
         sound.handle(events);
-        renderer.handle(events, game);
+        view.handle(events, game);
+        afterEvents(events);
       }
-      if (game.status === 'over') finish();
-      else if (game.status === 'draft') openDraft();
+      if (game.status === 'over') {
+        if (!startDeathCam()) finish();
+      } else if (game.status === 'draft') openDraft();
     }
-    renderer.ghost = ghost ? ghostBodyAt(ghost, game.time) : null;
-    renderer.draw(game, screen === 'play' || screen === 'over' || screen === 'draft' ? dt : 0);
+    view.ghost = ghost ? ghostBodyAt(ghost, game.time) : null;
+    view.draw(game, screen === 'play' || screen === 'over' || screen === 'draft' ? dt : 0);
     updateHud(game);
   } else {
-    renderer.ghost = null;
-    renderer.draw(attract, dt);
+    view.ghost = null;
+    view.draw(attract, dt);
     attractTick(dt);
   }
-  requestAnimationFrame(frame);
 }
+
+// ---------------------------------------------------------------- music & feel
+
+function afterEvents(events: GameEvent[]) {
+  haptics.handle(events, pads.connected());
+  for (const e of events) {
+    if (e.type === 'levelup') music?.drop();
+    if (e.type === 'die' && game?.status === 'over') music?.stop(true);
+  }
+}
+
+/** The soundtrack follows the action: combo, length, bosses and surging push it up. */
+function updateMusic() {
+  const g = screen === 'play' || (screen === 'pause' && online) ? game : null;
+  const wanted = !!g && g.status === 'playing' && data.settings.music && data.settings.sound && !g.mode.zen && !g.mode.rhythm;
+  if (!wanted) {
+    if (music?.playing && screen !== 'pause' && screen !== 'draft') music.stop();
+    if (music?.playing && (screen === 'pause' || screen === 'draft')) music.stop();
+    return;
+  }
+  if (!music) {
+    const ctx = sound.context;
+    const out = sound.output;
+    if (!ctx || !out) return;
+    music = new Music(ctx, out);
+  }
+  const p = g!.players[online?.me ?? 0];
+  const combo = g!.comboActive(p);
+  const k =
+    0.15 +
+    Math.min(1, p.body.length / 30) * 0.3 +
+    (combo >= 2 ? combo * 0.08 : 0) +
+    (g!.boss ? 0.35 : 0) +
+    (g!.isSurging(p) ? 0.15 : 0) +
+    Math.min(10, g!.level) * 0.02 +
+    (g!.mode.id === 'versus' ? 0.2 : 0);
+  music.intensity += (Math.min(1, k) - music.intensity) * 0.05;
+  music.bpm = 108 + Math.min(10, g!.level) * 2 + (g!.boss ? 8 : 0);
+  if (!music.playing) music.start();
+}
+
+// ---------------------------------------------------------------- replays
+
+/** Slow-motion replay of the last few seconds before a death. Returns false if skipped. */
+function startDeathCam(): boolean {
+  if (!data.settings.deathcam || !runner || !game || game.won || data.settings.reducedMotion) return false;
+  const point = runner.rewindPoint(3);
+  if (!point) return false;
+  const pb = new Runner(point.g, { script: runner.log, startFrame: point.f });
+  pb.timeScale = 0.45;
+  playback = {
+    runner: pb,
+    endFrame: runner.frame,
+    kind: 'deathcam',
+    focus: lastDeathPos,
+    t: 0,
+    zt: 0,
+    hold: 900,
+    speed: 1,
+    done: () => {
+      playback = null;
+      view.camera = null;
+      view.reset();
+      finish();
+    },
+  };
+  view.reset();
+  setText('replayTitle', 'instant replay');
+  setText('replayHint', 'any key to skip');
+  show('replay');
+  return true;
+}
+
+/** Record the last ~8 seconds as a video while it replays. */
+function startClip() {
+  if (!runner || !game || !clipSupported() || clip) return;
+  const point = runner.rewindPoint(8);
+  if (!point) return;
+  const source = view === renderer ? canvas : canvas3d;
+  const score = game.mode.id === 'versus' ? `${game.players[0].score} / ${game.players[1].score}` : game.score.toLocaleString();
+  sound.unlock();
+  try {
+    clip = new ClipRecorder(source, sound.captureStream(), () => `SSSNAKE  ${score}`);
+  } catch {
+    toast('clip', 'this browser cannot record video.');
+    return;
+  }
+  const pb = new Runner(point.g, { script: runner.log, startFrame: point.f });
+  playback = {
+    runner: pb,
+    endFrame: runner.frame,
+    kind: 'clip',
+    focus: lastDeathPos,
+    t: 0,
+    zt: 0,
+    hold: 1200,
+    speed: 1,
+    done: () => {
+      const rec = clip;
+      clip = null;
+      playback = null;
+      view.camera = null;
+      view.reset();
+      show('over');
+      if (!rec) return;
+      toast('clip', 'encoding...');
+      void rec.stop().then(async (file) => {
+        const how = await deliverClip(file);
+        toast('clip', how === 'shared' ? 'shared.' : `saved ${file.name}`);
+      });
+    },
+  };
+  view.reset();
+  setText('replayTitle', 'recording clip');
+  setText('replayHint', 'esc to stop early');
+  show('replay');
+}
+
+function startWatch(encoded: string, title: string) {
+  const r = decodeReplay(encoded);
+  if (!r) return term.print('that replay is damaged.', 'err');
+  game = gameFor(r);
+  runner = null;
+  customLevel = r.level ?? null;
+  challenge = null;
+  ghost = null;
+  const pb = new Runner(game, { script: r.inputs });
+  playback = {
+    runner: pb,
+    endFrame: r.frames,
+    kind: 'watch',
+    focus: null,
+    t: 0,
+    zt: 0,
+    hold: 1800,
+    speed: 1,
+    done: () => {
+      playback = null;
+      toTerminal('replay finished.');
+    },
+  };
+  view.reset();
+  hudCache.clear();
+  applyModeClasses(game);
+  setText('replayTitle', title);
+  setText('replayHint', 'space pause / 1 2 4 speed / esc exit');
+  show('replay');
+}
+
+async function watch(arg: string, t: Terminal) {
+  if (online) return t.print('finish your online match first.', 'err');
+  if (arg === 'last') {
+    if (!lastReplay) return t.print('no run recorded yet this session. {play} one first.', 'dim');
+    return startWatch(lastReplay, 'replay: your last run');
+  }
+  if (!/^[a-z0-9]{6,12}$/.test(arg)) return t.print('usage: watch last   or   watch <id from scores>', 'err');
+  t.print('downloading replay...', 'dim');
+  const encoded = await fetchReplay(arg);
+  if (!encoded) return t.print('replay not found (they are kept for 30 days).', 'err');
+  startWatch(encoded, 'replay');
+}
+
+function tickPlayback(dt: number) {
+  const pb = playback!;
+  const g = pb.runner.game;
+  pb.t += dt;
+  pb.runner.timeScale = pb.kind === 'deathcam' ? 0.45 : pb.kind === 'clip' ? (pb.runner.frame > pb.endFrame - 120 ? 0.5 : 1) : pb.speed;
+  pb.runner.tick(dt, pb.endFrame);
+  const events = g.drainEvents();
+  if (events.length) {
+    sound.handle(events);
+    view.handle(events, g);
+  }
+  if (pb.focus && (pb.kind === 'deathcam' || pb.runner.frame > pb.endFrame - 120)) {
+    pb.zt += dt;
+    const zoom = 1 + 0.75 * Math.min(1, pb.zt / 1400);
+    view.camera = { x: pb.focus.x, y: pb.focus.y, zoom };
+  }
+  const ended = pb.runner.frame >= pb.endFrame || g.status === 'over';
+  if (ended) {
+    pb.hold -= dt;
+    if (pb.hold <= 0) pb.done();
+  }
+  view.ghost = null;
+  view.draw(g, dt * (pb.kind === 'deathcam' ? 0.6 : 1));
+  clip?.capture();
+  updateHud(g);
+}
+
+/** Keys during a replay: any key skips a death cam; watch mode has transport controls. */
+window.addEventListener('keydown', (e) => {
+  if (screen !== 'replay' || !playback) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (playback.kind === 'deathcam') return playback.done();
+  if (e.code === 'Escape') return playback.done();
+  if (playback.kind === 'clip') return;
+  if (e.code === 'Space') playback.speed = playback.speed === 0 ? 1 : 0;
+  if (e.code === 'Digit1') playback.speed = 1;
+  if (e.code === 'Digit2') playback.speed = 2;
+  if (e.code === 'Digit4') playback.speed = 4;
+  setText('replayHint', playback.speed === 0 ? 'paused / space to resume' : `${playback.speed}x / space pause / esc exit`);
+}, true);
+stage.addEventListener('pointerdown', () => {
+  if (screen === 'replay' && playback && playback.kind === 'deathcam') playback.done();
+});
 
 // A self-playing snake behind the terminal.
 const attract = new Game({ mode: 'zen', seed: 7 });
@@ -705,6 +1068,7 @@ function setDefaultChips() {
   term.setChips([
     { label: 'play', cmd: 'play' },
     { label: 'daily', cmd: 'daily' },
+    { label: 'match', cmd: 'match' },
     { label: 'invite', cmd: 'invite' },
     { label: 'join', cmd: 'join', fill: true },
     { label: 'versus', cmd: 'versus' },
@@ -735,6 +1099,9 @@ const term: Terminal = new Terminal(
     },
     invite,
     join,
+    watch,
+    quick,
+    netcheck,
     pendingChallenge: () => pendingChallenge,
     acceptChallenge,
     declineChallenge: () => {
@@ -765,7 +1132,7 @@ function boot() {
     ['', 'out'],
     ['slither. shed. surge.', 'title'],
     [`daily ${dailyKey}: ${best ? `best ${best.toLocaleString()}` : 'not played yet'}${data.ghosts[dailyKey] ? ', ghost saved' : ''}`, 'dim'],
-    ['type {help} or tap a command. {play} starts arcade. {invite} plays a friend online.', 'out'],
+    ['type {help} or tap a command. {play} starts arcade. {match} finds an online opponent; {invite} plays a friend.', 'out'],
     ['change the look any time: {terminal|theme terminal} {nokia|theme nokia} {gameboy|theme gameboy} {paper|theme paper} {minimal|theme minimal}', 'dim'],
   ];
   term.boot(lines, data.settings.reducedMotion, () => {
@@ -803,24 +1170,28 @@ const editor = new Editor({
 // ---------------------------------------------------------------- wiring
 
 const playing = () => screen === 'play' && game !== null;
+/** Local input: recorded by the runner so the run can be replayed. */
+const local = (i: Input) => {
+  if (runner && game && runner.game === game) runner.input(i);
+};
 
-bindInput(stage, {
+const inputHandlers: InputHandlers = {
   gesture: () => sound.unlock(),
-  versus: () => game?.mode.id === 'versus' && !online && screen === 'play',
+  versus: () => game?.mode.id === 'versus' && !online && !cpuBot && screen === 'play',
   turn: (d, p) => {
     if (online) {
       if (screen === 'play') sendInput({ t: 'turn', d });
-    } else if (playing()) game!.turn(d, p);
+    } else if (playing()) local({ p, t: 'turn', d });
   },
   shed: (p) => {
     if (online) {
       if (screen === 'play') sendInput({ t: 'shed' });
-    } else if (playing()) game!.shed(p);
+    } else if (playing()) local({ p, t: 'shed' });
   },
   ability: (held, p) => {
     if (online) sendInput({ t: 'hold', on: held && screen === 'play' });
-    else if (playing()) game!.setHeld(p, held);
-    else game?.setHeld(p, false);
+    else if (playing()) local({ p, t: 'hold', on: held });
+    else if (game?.players[p]?.held) local({ p, t: 'hold', on: false });
   },
   pause: () => {
     if (screen === 'play') openPause();
@@ -835,28 +1206,30 @@ bindInput(stage, {
   digit: (n) => {
     if (screen === 'draft' && n <= 3) chooseDraft(n - 1);
   },
-});
+};
+bindInput(stage, inputHandlers);
+const padHandlers: PadHandlers = { ...inputHandlers, twoPlayer: () => game?.mode.id === 'versus' && !online && !cpuBot };
 
 pressButton($('btnShed'), () => {
   if (online) sendInput({ t: 'shed' });
-  else if (playing()) game!.shed(0);
+  else if (playing()) local({ p: 0, t: 'shed' });
 });
 pressButton(
   $('btnAbility'),
   () => {
     if (online) sendInput({ t: 'hold', on: true });
-    else if (playing()) game!.setHeld(0, true);
+    else if (playing()) local({ p: 0, t: 'hold', on: true });
   },
   () => {
     if (online) sendInput({ t: 'hold', on: false });
-    else game?.setHeld(0, false);
+    else local({ p: 0, t: 'hold', on: false });
   },
 );
 pressButton($('btnPause'), () => (screen === 'play' ? openPause() : togglePause()));
 for (const b of $('dpad').querySelectorAll<HTMLButtonElement>('button')) {
   pressButton(b, () => {
     if (online) sendInput({ t: 'turn', d: b.dataset.dir as Dir });
-    else if (playing()) game!.turn(b.dataset.dir as Dir, 0);
+    else if (playing()) local({ p: 0, t: 'turn', d: b.dataset.dir as Dir });
   });
 }
 
@@ -880,6 +1253,10 @@ const quit = () => {
 $('quitBtn').addEventListener('click', quit);
 $('overMenuBtn').addEventListener('click', quit);
 $('retryBtn').addEventListener('click', retry);
+$('clipBtn').addEventListener('click', startClip);
+$('watchBtn').addEventListener('click', () => {
+  if (lastReplay) startWatch(lastReplay, 'replay: your last run');
+});
 $('shareBtn').addEventListener('click', async () => {
   if (!game) return;
   const g = game;
@@ -907,7 +1284,7 @@ $('submitBtn').addEventListener('click', async () => {
   btn.disabled = true;
   $('submitStatus').textContent = 'uploading...';
   const g = game;
-  const res = await submitGlobal({ board: lastBoard, name, score: g.score, level: g.level, timeMs: g.time, cls: g.p0.cls });
+  const res = await submitGlobal({ board: lastBoard, name, score: g.score, level: g.level, timeMs: g.time, cls: g.p0.cls, replay: lastReplay });
   if (res.status === 'ok') $('submitStatus').textContent = res.rank ? `> rank #${res.rank} worldwide` : '> submitted';
   else {
     btn.disabled = res.status === 'off';
@@ -946,6 +1323,12 @@ if (import.meta.env.DEV) {
     data,
     term,
     online: () => online,
+    /** Advance the whole app by `ms` of simulated time in 16 ms frames. */
+    advance: (ms: number) => {
+      for (let t = 0; t < ms; t += 16) step(lastFrame + 16);
+    },
+    screen: () => screen,
+    startClip,
   };
 }
 

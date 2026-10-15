@@ -774,6 +774,21 @@ export class Game {
     }
   }
 
+  /** Independent deep copy (used for instant replays). */
+  clone(): Game {
+    const copy = Object.create(Game.prototype) as Game;
+    const src = this as unknown as Record<string, unknown>;
+    const dst = copy as unknown as Record<string, unknown>;
+    for (const k of Object.keys(this)) {
+      if (k === 'rng' || k === 'events') continue;
+      dst[k] = structuredClone(src[k]);
+    }
+    dst.rng = new Rng(0);
+    copy.rng.state = this.rng.state;
+    dst.events = [];
+    return copy;
+  }
+
   /** One full tick for every player and the world (used by tests and tools). */
   step() {
     for (const p of [...this.players]) {

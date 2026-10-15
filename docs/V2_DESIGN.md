@@ -91,3 +91,12 @@ About 18 achievements are tracked locally, and a toast appears when one unlocks.
 - **Look:** green CRT phosphor (`set color amber|white` for alternatives) with scanlines, flicker and glow. The board is a character grid: solid blocks for snakes and walls, glyphs for items (`@` food, `$` golden, `*` mines, `m` mice, `A`/`B` portals, `#` walls, `<>^v` arrows). Movement is discrete. Particles are "data bits".
 - **Command line:** the main menu is a working terminal (`src/terminal.ts`, `src/commands.ts`). The old menu, help, leaderboard, achievements and challenge overlays became commands.
 - **Online versus:** invite codes through `api/room.js` and a WebRTC data channel. Deterministic lockstep (`src/net/lockstep.ts`) sends inputs only, with ping-based input delay and periodic checksums. `src/net/online.ts` handles rounds and rematches.
+
+## v4: next-gen pass
+
+- **Neo (3D):** a three.js renderer behind the same view contract as the 2D renderer, lazy-loaded. It has tube snakes, an instanced arena, bloom, shadows (on high quality), particles, shockwaves and a follow / replay camera.
+- **Deterministic local runs:** a fixed-step `Runner` records inputs. That powers instant replays (keyframe clones plus re-simulation), full replays, video clips (MediaRecorder on the replay) and server-side score verification (engine bundled into `api/_engine.js`).
+- **Online:** `match` (public quick-match queue in Redis) alongside invite codes. `/api/ice` serves TURN relay credentials (Cloudflare, or a generic provider), and `netcheck` diagnoses the setup.
+- **CPU opponents:** flood-fill safety, personality targets, and difficulty via reaction time, noise and blunders. Bot inputs are recorded like a player's.
+- **Feel:** an adaptive synthesised soundtrack, haptics and rumble, and standard gamepad mapping.
+- **Not done yet:** the endless procedural world needs a configurable board size across the engine and renderers, so it is a separate piece of work.

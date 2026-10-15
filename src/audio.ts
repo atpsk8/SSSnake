@@ -8,6 +8,26 @@ export class Sound {
   enabled = true;
   musicEnabled = true;
 
+  private recordDest: MediaStreamAudioDestinationNode | null = null;
+
+  /** The live audio context and master bus (for the music engine). */
+  get context(): AudioContext | null {
+    return this.ctx;
+  }
+  get output(): GainNode | null {
+    return this.master;
+  }
+
+  /** An audio stream of everything the game plays, for recording clips. */
+  captureStream(): MediaStream | null {
+    if (!this.ctx || !this.master) return null;
+    if (!this.recordDest) {
+      this.recordDest = this.ctx.createMediaStreamDestination();
+      this.master.connect(this.recordDest);
+    }
+    return this.recordDest.stream;
+  }
+
   /** Must be called from a user gesture before audio can play. */
   unlock() {
     if (!this.ctx) {
