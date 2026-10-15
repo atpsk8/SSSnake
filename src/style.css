@@ -1,6 +1,11 @@
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/700.css';
 @import '@fontsource/vt323/400.css';
+@import '@fontsource/silkscreen/400.css';
+@import '@fontsource/patrick-hand/400.css';
+@import '@fontsource/nunito/400.css';
+@import '@fontsource/nunito/700.css';
+@import '@fontsource/nunito/800.css';
 
 /* ---------------------------------------------------------------- phosphor themes */
 
@@ -65,8 +70,8 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
-  font-size: 14px;
+  font-family: var(--font);
+  font-size: var(--base-size);
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
@@ -93,7 +98,7 @@ body {
   gap: 6px;
 }
 
-:root[data-crt='full'] #app {
+:root[data-theme='terminal'][data-crt='full'] #app {
   animation: flicker 6s infinite steps(1);
 }
 
@@ -108,7 +113,8 @@ body {
     radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 62%, rgba(0, 0, 0, var(--vignette)) 100%);
 }
 
-:root[data-crt='off'] .crt {
+:root[data-crt='off'] .crt,
+:root:not([data-theme='terminal']) .crt {
   display: none;
 }
 
@@ -140,7 +146,7 @@ body {
 }
 
 .small-text {
-  font-size: 12px;
+  font-size: 0.86em;
 }
 
 button,
@@ -164,6 +170,7 @@ kbd {
 /* ---------------------------------------------------------------- HUD (status line) */
 
 .hud {
+  border-radius: var(--radius);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -177,7 +184,7 @@ kbd {
 
 .hud .k {
   color: var(--dim);
-  font-size: 12px;
+  font-size: 0.86em;
 }
 
 .hud .v {
@@ -188,7 +195,7 @@ kbd {
 
 .hud .big {
   color: var(--bright);
-  font-family: 'VT323', monospace;
+  font-family: var(--display);
   font-size: 24px;
   line-height: 1;
 }
@@ -218,7 +225,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 0.79em;
   text-transform: uppercase;
 }
 
@@ -251,7 +258,7 @@ kbd {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
-  font-size: 11px;
+  font-size: 0.79em;
   color: var(--dim);
 }
 
@@ -325,7 +332,7 @@ body.editing #board {
 }
 
 .banner h2 {
-  font-family: 'VT323', monospace;
+  font-family: var(--display);
   font-weight: 400;
   font-size: clamp(40px, 11vw, 72px);
   line-height: 1;
@@ -339,7 +346,7 @@ body.editing #board {
 }
 
 .banner p {
-  font-size: 16px;
+  font-size: 1.14em;
   color: var(--fg);
   text-transform: uppercase;
 }
@@ -364,10 +371,9 @@ body.editing #board {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border: 1px solid var(--fg);
-  box-shadow:
-    0 0 0 1px var(--bg),
-    0 0 10px var(--glow);
+  border: 1px solid var(--win-border);
+  border-radius: var(--radius);
+  box-shadow: var(--win-shadow);
 }
 
 .win.small {
@@ -378,11 +384,12 @@ body.editing #board {
   display: flex;
   justify-content: space-between;
   padding: 2px 8px;
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--bar-bg);
+  color: var(--bar-fg);
   text-shadow: none;
   font-weight: 700;
   text-transform: lowercase;
+  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 .win-bar span:first-child::before {
@@ -417,8 +424,8 @@ body.editing #board {
 .editor-bar button:hover,
 .editor-bar button:focus-visible,
 .editor-bar .tool.active {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--hover-bg);
+  color: var(--hover-fg);
   text-shadow: none;
   outline: none;
 }
@@ -444,7 +451,7 @@ body.editing #board {
 }
 
 .final {
-  font-family: 'VT323', monospace;
+  font-family: var(--display);
   font-size: 64px;
   line-height: 1;
   color: var(--bright);
@@ -454,8 +461,8 @@ body.editing #board {
 .final em {
   display: inline-block;
   margin-left: 12px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 13px;
+  font-family: var(--font);
+  font-size: 0.93em;
   font-style: normal;
   text-transform: uppercase;
   color: var(--bg);
@@ -470,7 +477,7 @@ body.editing #board {
   grid-template-columns: 1fr auto;
   gap: 2px 16px;
   margin: 0;
-  font-size: 13px;
+  font-size: 0.93em;
 }
 
 .summary dt {
@@ -569,7 +576,7 @@ body.editing #board {
 }
 
 .draft-desc {
-  font-size: 12px;
+  font-size: 0.86em;
   line-height: 1.4;
 }
 
@@ -636,7 +643,7 @@ body.editing #board {
 }
 
 .tl-big {
-  font-family: 'VT323', monospace;
+  font-family: var(--display);
   font-size: 22px;
   line-height: 1;
   color: var(--bright);
@@ -655,8 +662,8 @@ body.editing #board {
 
 .tl-cmd:hover,
 .tl-cmd:focus-visible {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--hover-bg);
+  color: var(--hover-fg);
   text-shadow: none;
   outline: none;
 }
@@ -686,7 +693,7 @@ body.editing #board {
   color: var(--bright);
   caret-color: var(--fg);
   text-shadow: inherit;
-  font-size: 16px; /* stops iOS zooming on focus */
+  font-size: max(16px, 1.14em); /* stops iOS zooming on focus */
 }
 
 .term-chips {
@@ -698,16 +705,17 @@ body.editing #board {
 
 .chip-cmd {
   padding: 4px 8px;
+  border-radius: var(--radius);
   background: transparent;
   border: 1px solid var(--dim);
   color: var(--fg);
-  font-size: 13px;
+  font-size: 0.93em;
 }
 
 .chip-cmd:hover,
 .chip-cmd:focus-visible {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--hover-bg);
+  color: var(--hover-fg);
   text-shadow: none;
   outline: none;
 }
@@ -759,8 +767,8 @@ body.editing #board {
 
 .ctl.pressed,
 .dpad button.pressed {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--hover-bg);
+  color: var(--hover-fg);
   text-shadow: none;
 }
 
@@ -853,7 +861,7 @@ body.editing .editor-bar {
   grid-template-columns: 1fr 1fr;
   gap: 6px 14px;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: 0.93em;
 }
 
 .twist-toggles {
@@ -895,7 +903,7 @@ body.editing .editor-bar {
   box-shadow: 0 0 8px var(--glow);
   display: flex;
   flex-direction: column;
-  font-size: 12px;
+  font-size: 0.86em;
   transition: opacity 0.3s;
 }
 
@@ -915,9 +923,8 @@ body.editing .editor-bar {
 /* ---------------------------------------------------------------- small screens */
 
 @media (max-width: 620px) {
-  html,
   body {
-    font-size: 13px;
+    font-size: calc(var(--base-size) * 0.93);
   }
   .draft-cards,
   .editor-grid,
@@ -945,4 +952,178 @@ body.editing .editor-bar {
 body.reduced-motion *,
 body.reduced-motion #app {
   animation: none !important;
+}
+
+/* ---------------------------------------------------------------- themes */
+
+:root {
+  --font: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --display: 'VT323', 'IBM Plex Mono', ui-monospace, monospace;
+  --base-size: 14px;
+  --radius: 0px;
+  --bar-bg: var(--fg);
+  --bar-fg: var(--bg);
+  --hover-bg: var(--fg);
+  --hover-fg: var(--bg);
+  --win-border: var(--fg);
+  --win-shadow: 0 0 0 1px var(--bg), 0 0 10px var(--glow);
+}
+
+:root[data-theme='nokia'] {
+  --bg: #b4c191;
+  --fg: #2c3a1e;
+  --bright: #141c0c;
+  --dim: #5f6f45;
+  --faint: #a2af80;
+  --alt: #5f6f45;
+  --glow: transparent;
+  --font: 'VT323', ui-monospace, monospace;
+  --display: 'Silkscreen', 'VT323', monospace;
+  --base-size: 20px;
+  --win-shadow: 4px 4px 0 rgba(20, 28, 12, 0.25);
+  color-scheme: light;
+}
+
+:root[data-theme='gameboy'] {
+  --bg: #9bbc0f;
+  --fg: #0f380f;
+  --bright: #0f380f;
+  --dim: #306230;
+  --faint: #8bac0f;
+  --alt: #306230;
+  --glow: transparent;
+  --font: 'VT323', ui-monospace, monospace;
+  --display: 'Silkscreen', 'VT323', monospace;
+  --base-size: 20px;
+  --win-shadow: 4px 4px 0 #306230;
+  color-scheme: light;
+}
+
+:root[data-theme='paper'] {
+  --bg: #f7f2e4;
+  --fg: #2f3e57;
+  --bright: #1c2738;
+  --dim: #7d8798;
+  --faint: #e4ddc9;
+  --alt: #b5523b;
+  --glow: transparent;
+  --font: 'Patrick Hand', 'Comic Sans MS', cursive;
+  --display: 'Patrick Hand', 'Comic Sans MS', cursive;
+  --base-size: 17px;
+  --radius: 4px;
+  --win-shadow: 2px 3px 0 rgba(47, 62, 87, 0.18);
+  color-scheme: light;
+}
+
+:root[data-theme='minimal'] {
+  --bg: #f7f8fa;
+  --fg: #33414f;
+  --bright: #1f2a35;
+  --dim: #7d8a99;
+  --faint: #e3e7ec;
+  --alt: #e2875a;
+  --glow: transparent;
+  --font: 'Nunito', system-ui, sans-serif;
+  --display: 'Nunito', system-ui, sans-serif;
+  --base-size: 15px;
+  --radius: 14px;
+  --bar-bg: transparent;
+  --bar-fg: #33414f;
+  --hover-bg: #3a9188;
+  --hover-fg: #ffffff;
+  --win-border: #e3e7ec;
+  --win-shadow: 0 12px 32px rgba(31, 42, 53, 0.12);
+  color-scheme: light;
+}
+
+/* Only the terminal theme glows or has scanlines. */
+:root:not([data-theme='terminal']) {
+  --text-glow: none;
+  --scan: 0;
+  --vignette: 0;
+}
+
+:root:not([data-theme='terminal']) body {
+  background: var(--bg);
+}
+
+:root[data-theme='paper'] body {
+  /* faint paper grain from layered gradients */
+  background:
+    radial-gradient(ellipse at top left, rgba(255, 255, 255, 0.6), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(196, 180, 140, 0.18), transparent 60%),
+    var(--bg);
+}
+
+:root[data-theme='minimal'] body {
+  background: linear-gradient(160deg, #f7f8fa, #eceff4);
+}
+
+:root[data-theme='paper'] .win-bar span:first-child::before,
+:root[data-theme='minimal'] .win-bar span:first-child::before,
+:root[data-theme='minimal'] .win-lights {
+  content: none;
+  display: none;
+}
+
+:root[data-theme='minimal'] .win-bar {
+  padding: 10px 14px 0;
+  font-weight: 800;
+  text-transform: none;
+  font-size: 1.07em;
+}
+
+:root[data-theme='minimal'] .win-body button.primary {
+  background: #3a9188;
+  color: #fff;
+  border-radius: 10px;
+  text-align: center;
+}
+
+:root[data-theme='minimal'] .win-body button.primary::before,
+:root[data-theme='minimal'] .banner h2::before {
+  content: none;
+}
+
+:root[data-theme='minimal'] .win-body button,
+:root[data-theme='minimal'] .editor-bar button,
+:root[data-theme='minimal'] .ctl,
+:root[data-theme='minimal'] .dpad button {
+  border-radius: 10px;
+}
+
+:root[data-theme='minimal'] .hud,
+:root[data-theme='minimal'] .bar {
+  border-color: var(--faint);
+  background: #fff;
+}
+
+:root[data-theme='minimal'] .bar > span {
+  background: #3a9188;
+  border-radius: 4px;
+}
+
+:root[data-theme='minimal'] .hud .big,
+:root[data-theme='minimal'] .final {
+  font-weight: 800;
+  color: #3a9188;
+}
+
+:root[data-theme='paper'] .bar > span {
+  background: repeating-linear-gradient(90deg, var(--fg) 0 5px, transparent 5px 7px);
+}
+
+:root[data-theme='paper'] .hud .big,
+:root[data-theme='paper'] .final {
+  color: #b5523b;
+}
+
+:root[data-theme='nokia'] .win-lights,
+:root[data-theme='gameboy'] .win-lights {
+  display: none;
+}
+
+:root[data-theme='nokia'] .tl-big,
+:root[data-theme='gameboy'] .tl-big {
+  font-family: 'VT323', monospace;
 }

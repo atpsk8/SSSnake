@@ -1,6 +1,20 @@
 # SSSnake
 
-**Slither. Shed. Surge.** A terminal remix of Snake: soft green phosphor (CRT effects adjustable with `set crt soft|full|off`), a working command line as the menu, and online versus by invite code. Underneath are coils, mutations, bosses, arena twists, four snake types, rhythm mode, a level editor, challenge links and leaderboards.
+**Slither. Shed. Surge.** A remix of Snake with five swappable looks, a working command line as the menu, and online versus by invite code. Underneath are coils, mutations, bosses, arena twists, four snake types, rhythm mode, a level editor, challenge links and leaderboards.
+
+## Themes
+
+Type `theme` (or use the settings panel) to switch the whole look. The board, windows, fonts and colours all change live:
+
+| Theme | Look |
+| --- | --- |
+| `terminal` | Soft phosphor command line. `set color green\|amber\|white`; `set crt soft\|full\|off` controls scanlines, glow and flicker. |
+| `nokia` | Grey-green LCD with dark pixels, a nod to the original Snake. |
+| `gameboy` | Four shades of green, chunky pixels. |
+| `paper` | Ink doodles on warm ruled paper. Light and calm. |
+| `minimal` | Pastel flat colours and a rounded snake. |
+
+Terminal, Nokia and Game Boy draw on a block grid. Paper and Minimal draw a continuous snake body and drawn shapes for items.
 
 ## The command line
 
@@ -13,11 +27,12 @@ The game boots into a terminal. Type a command, click a highlighted one, or tap 
 | `invite` | Host an online match: prints a 4-character room code and a join link. |
 | `join <code>` | Join a friend's online match. Opening a `#join=CODE` link does this automatically. |
 | `snake [type]` | List or pick a snake type (`racer`, `viper`, `cobra`, `python`). |
+| `theme [name]` | `terminal`, `nokia`, `gameboy`, `paper`, `minimal`. |
 | `skin [name]` | `solid`, `scanline`, `wireframe`, `overclock`. |
 | `scores [board] [--local]` | Leaderboards: `arcade`, `daily`, `classic`, `rhythm`. |
 | `trophies`, `stats` | Achievements and personal bests. |
 | `editor`, `levels` | The level editor and your saved levels. |
-| `set [key value]` | Settings: `name`, `color green\|amber\|white`, `crt soft\|full\|off`, `sound`, `music`, `motion full\|reduced`, `touch swipe\|dpad`. |
+| `set [key value]` | Settings: `name`, `theme`, `color green\|amber\|white`, `crt soft\|full\|off`, `sound`, `music`, `motion full\|reduced`, `touch swipe\|dpad`. |
 | `help`, `controls`, `clear`, `about` | — |
 
 Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` stops `invite` or `join`. There are a few easter eggs too.
@@ -68,11 +83,11 @@ npm run preview  # serve the production build (no /api)
 
 To try online play locally, open two browser windows on `http://localhost:5173`. Run `invite` in one and `join <code>` in the other.
 
-The stack is Vite, TypeScript and Canvas 2D. Fonts are IBM Plex Mono and VT323 (bundled through Fontsource), and sound is generated with the Web Audio API.
+The stack is Vite, TypeScript and Canvas 2D. Fonts are IBM Plex Mono, VT323, Silkscreen, Patrick Hand and Nunito (bundled through Fontsource), and sound is generated with the Web Audio API.
 
 - **Engine:** `src/game/` is the deterministic engine; online play relies on it being deterministic.
 - **Netcode:** `src/net/` has `lockstep.ts`, `online.ts` (match flow) and `peer.ts` (WebRTC and signaling).
-- **Front end:** `src/terminal.ts` and `src/commands.ts` (the command line), `src/render.ts` (CRT renderer), `src/main.ts` (UI wiring) and `src/editor.ts`.
+- **Front end:** `src/terminal.ts` and `src/commands.ts` (the command line), `src/render.ts` and `src/themes.ts` (theme-aware renderer), `src/main.ts` (UI wiring) and `src/editor.ts`.
 - **API:** `api/scores.js` and `api/room.js` are the Vercel functions. `api/_lib.js` and `api/_memory.js` are shared code (files starting with `_` aren't deployed as endpoints).
 
 ## Deploy (Vercel)

@@ -7,6 +7,7 @@ import { ACHIEVEMENTS, CLASS_UNLOCK, SKINS, isUnlocked } from './progress';
 import type { Challenge } from './share';
 import type { PaletteId, SaveData, SkinId } from './storage';
 import type { Command, Terminal } from './terminal';
+import { THEMES, THEME_ORDER, type ThemeId } from './themes';
 
 export interface AppCtx {
   data: SaveData;
@@ -41,6 +42,10 @@ export function buildCommands(app: AppCtx): Command[] {
         app.updatePrompt();
         break;
       }
+      case 'theme':
+        if (!THEME_ORDER.includes(v as ThemeId)) return t.print(`usage: set theme ${THEME_ORDER.join('|')}`, 'err');
+        s().theme = v as ThemeId;
+        break;
       case 'color':
       case 'colour':
       case 'phosphor':
@@ -78,8 +83,9 @@ export function buildCommands(app: AppCtx): Command[] {
     const st = s();
     t.table([
       ['name', st.name || '(not set)', 'set name <name>'],
-      ['color', st.palette, 'set color green|amber|white'],
-      ['crt', st.crt, 'set crt soft|full|off  (scanlines, glow, flicker)'],
+      ['theme', st.theme, 'theme terminal|nokia|gameboy|paper|minimal'],
+      ['color', st.palette, 'set color green|amber|white  (terminal theme)'],
+      ['crt', st.crt, 'set crt soft|full|off  (terminal theme)'],
       ['sound', st.sound ? 'on' : 'off', 'set sound on|off'],
       ['music', st.music ? 'on' : 'off', 'set music on|off'],
       ['motion', st.reducedMotion ? 'reduced' : 'full', 'set motion full|reduced'],
@@ -111,6 +117,7 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('PROFILE', 'title');
         t.print('  {scores} [board]   leaderboards: arcade, daily, classic, rhythm');
         t.print('  {trophies}         achievements and unlocks');
+        t.print('  {theme} [name]     change the look: terminal, nokia, gameboy, paper, minimal');
         t.print('  {skin} [name]      snake skins');
         t.print('  {set} [key value]  settings (name, color, crt, sound, music, motion, touch)');
         t.print('SYSTEM', 'title');
@@ -314,6 +321,25 @@ export function buildCommands(app: AppCtx): Command[] {
       run(args, t) {
         if (!args.length) return printSettings(t);
         setSetting(t, args[0].toLowerCase(), args.slice(1).join(' '));
+      },
+    },
+    {
+      name: 'theme',
+      aliases: ['themes', 'look'],
+      usage: 'theme [terminal|nokia|gameboy|paper|minimal]',
+      desc: 'change the whole look of the game',
+      run(args, t) {
+        if (args[0]) {
+          const id = args[0].toLowerCase() as ThemeId;
+          if (!THEME_ORDER.includes(id)) return t.print(`no theme '${args[0]}'. try {theme}`, 'err');
+          s().theme = id;
+          app.save();
+          app.applySettings();
+          return t.print(`theme = ${id}`, 'ok');
+        }
+        for (const id of THEME_ORDER) {
+          t.print(`${s().theme === id ? '*' : ' '} {${id}|theme ${id}}  ${THEMES[id].desc}`);
+        }
       },
     },
     { name: 'name', usage: 'name <name>', desc: 'set your player name', run: (a, t) => setSetting(t, 'name', a.join(' ')) },

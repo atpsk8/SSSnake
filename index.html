@@ -101,7 +101,17 @@
             <div class="win-body">
               <label class="setting"><span>name</span><input id="optName" type="text" maxlength="16" placeholder="for leaderboards" /></label>
               <label class="setting">
-                <span>phosphor</span>
+                <span>theme</span>
+                <select id="optTheme">
+                  <option value="terminal">terminal</option>
+                  <option value="nokia">nokia lcd</option>
+                  <option value="gameboy">game boy</option>
+                  <option value="paper">paper</option>
+                  <option value="minimal">minimal</option>
+                </select>
+              </label>
+              <label class="setting">
+                <span>terminal colour</span>
                 <select id="optPalette">
                   <option value="green">green</option>
                   <option value="amber">amber</option>
@@ -109,7 +119,7 @@
                 </select>
               </label>
               <label class="setting">
-                <span>crt effects</span>
+                <span>terminal crt</span>
                 <select id="optCrt">
                   <option value="soft">soft</option>
                   <option value="full">full</option>

@@ -1,5 +1,6 @@
 import type { LevelData } from './game/levels';
 import type { ModeId, SnakeClass } from './game/types';
+import type { ThemeId } from './themes';
 
 export type PaletteId = 'green' | 'amber' | 'white';
 export type TouchStyle = 'swipe' | 'dpad';
@@ -8,6 +9,7 @@ export type SkinId = 'classic' | 'ember' | 'ghost' | 'gold';
 export type CrtLevel = 'soft' | 'full' | 'off';
 
 export interface Settings {
+  theme: ThemeId;
   palette: PaletteId;
   crt: CrtLevel;
   reducedMotion: boolean;
@@ -56,6 +58,7 @@ function defaults(): SaveData {
     levels: [],
     boards: {},
     settings: {
+      theme: 'terminal',
       palette: 'green',
       crt: 'soft',
       reducedMotion: reduced,
@@ -93,6 +96,7 @@ export function load(): SaveData {
 function migrate(s: Settings): Settings {
   if (!['green', 'amber', 'white'].includes(s.palette)) s.palette = 'green';
   if (!['soft', 'full', 'off'].includes(s.crt)) s.crt = 'soft';
+  if (!['terminal', 'nokia', 'gameboy', 'paper', 'minimal'].includes(s.theme)) s.theme = 'terminal';
   return s;
 }
 

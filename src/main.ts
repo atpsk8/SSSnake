@@ -16,7 +16,8 @@ import type { Lockstep, NetInput } from './net/lockstep';
 import { OnlineMatch } from './net/online';
 import { NetError, hostRoom, joinRoom, type PeerLink } from './net/peer';
 import { CLASS_UNLOCK, SKINS, evaluate, isUnlocked, type RunContext } from './progress';
-import { PALETTES, POWER_LABEL, Renderer } from './render';
+import { POWER_LABEL, Renderer } from './render';
+import { THEMES } from './themes';
 import { challengeUrl, readChallengeFromHash, shareLink, type Challenge } from './share';
 import { addLocalScore, load, save, type SaveData } from './storage';
 import { Terminal } from './terminal';
@@ -103,7 +104,9 @@ function boardKey(mode: ModeId): string | null {
 
 function applySettings() {
   const s = data.settings;
-  renderer.palette = PALETTES[s.palette] ?? PALETTES.green;
+  renderer.setTheme(s.theme, s.palette);
+  document.documentElement.dataset.theme = s.theme;
+  loadThemeFonts();
   renderer.reducedMotion = s.reducedMotion;
   renderer.skin = isUnlocked(data.achievements, SKINS[s.skin]?.unlock ?? null) ? s.skin : 'classic';
   sound.enabled = s.sound;
@@ -118,7 +121,16 @@ function applySettings() {
   syncSettingsForm();
 }
 
+/** Canvas text needs the theme's fonts loaded; redraw the cached board once they are. */
+function loadThemeFonts() {
+  const t = THEMES[data.settings.theme];
+  if (!document.fonts) return;
+  const fams = [t.font, t.display].map((f) => `16px ${f}`);
+  void Promise.all(fams.map((f) => document.fonts.load(f).catch(() => []))).then(() => renderer.invalidate());
+}
+
 function syncSettingsForm() {
+  $<HTMLSelectElement>('optTheme').value = data.settings.theme;
   $<HTMLSelectElement>('optPalette').value = data.settings.palette;
   $<HTMLSelectElement>('optCrt').value = data.settings.crt;
   $<HTMLSelectElement>('optTouch').value = data.settings.touch;
@@ -132,6 +144,7 @@ function bindSettings() {
   const commit = () => {
     data.settings = {
       ...data.settings,
+      theme: $<HTMLSelectElement>('optTheme').value as SaveData['settings']['theme'],
       palette: $<HTMLSelectElement>('optPalette').value as SaveData['settings']['palette'],
       crt: $<HTMLSelectElement>('optCrt').value as SaveData['settings']['crt'],
       touch: $<HTMLSelectElement>('optTouch').value as SaveData['settings']['touch'],
@@ -143,7 +156,7 @@ function bindSettings() {
     save(data);
     applySettings();
   };
-  for (const id of ['optPalette', 'optCrt', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
+  for (const id of ['optTheme', 'optPalette', 'optCrt', 'optTouch', 'optMotion', 'optSound', 'optMusic', 'optName']) $(id).addEventListener('change', commit);
   $('settingsDone').addEventListener('click', () => show(settingsReturn));
 }
 
@@ -753,6 +766,7 @@ function boot() {
     ['slither. shed. surge.', 'title'],
     [`daily ${dailyKey}: ${best ? `best ${best.toLocaleString()}` : 'not played yet'}${data.ghosts[dailyKey] ? ', ghost saved' : ''}`, 'dim'],
     ['type {help} or tap a command. {play} starts arcade. {invite} plays a friend online.', 'out'],
+    ['change the look any time: {terminal|theme terminal} {nokia|theme nokia} {gameboy|theme gameboy} {paper|theme paper} {minimal|theme minimal}', 'dim'],
   ];
   term.boot(lines, data.settings.reducedMotion, () => {
     const joinCode = /[#&]join=([A-Za-z0-9]{4})/.exec(location.hash)?.[1];
