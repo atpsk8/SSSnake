@@ -15,7 +15,7 @@ import { dailySeed, todayKey } from './game/rng';
 import type { DeathCause, Dir, EffectKind, GameEvent, ModeId, MutationId, SnakeClass, Vec } from './game/types';
 import { decodeGhost, encodeGhost, ghostBodyAt, type Ghost } from './ghost';
 import { bindInput, pressButton, type InputHandlers } from './input';
-import { fetchReplay, globalBoard, submitGlobal } from './leaderboard';
+import { fetchGlobal, fetchReplay, globalBoard, submitGlobal } from './leaderboard';
 import type { Lockstep, NetInput } from './net/lockstep';
 import { OnlineMatch, type OnlineHooks } from './net/online';
 import { HostRoom, NetError, joinRoom, netStatus, quickMatch, type PeerLink } from './net/peer';
@@ -972,6 +972,35 @@ function updateLegend(g: Game) {
 }
 
 let boardHtml = '';
+
+/** The global top scores for the board being played, refreshed at most once a minute. */
+const GLOBAL_REFRESH_MS = 60000;
+let globalTop: { board: string; at: number; rows: { name: string; score: number }[] | null; loading: boolean } = {
+  board: '',
+  at: 0,
+  rows: null,
+  loading: false,
+};
+
+/** Rows for the scoreboard's list: global when the board has one and it answered, else this device. */
+function topScores(board: string): { rows: { name: string; score: number }[]; global: boolean } {
+  if (globalBoard(board)) {
+    const stale = globalTop.board !== board || performance.now() - globalTop.at > GLOBAL_REFRESH_MS;
+    if (stale && !globalTop.loading) {
+      if (globalTop.board !== board) globalTop = { board, at: 0, rows: null, loading: false };
+      globalTop.loading = true;
+      void fetchGlobal(board).then((r) => {
+        if (globalTop.board !== board) return;
+        globalTop.loading = false;
+        globalTop.at = performance.now();
+        if (r.status === 'ok') globalTop.rows = r.scores.map((s) => ({ name: s.name, score: s.score }));
+      });
+    }
+    if (globalTop.board === board && globalTop.rows) return { rows: globalTop.rows, global: true };
+  }
+  return { rows: (data.boards[board] ?? []).map((r) => ({ name: r.name, score: r.score })), global: false };
+}
+
 const mmss = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms / 1000) % 60)).padStart(2, '0')}`;
 
 /** Right panel: the live score and, solo, this device's top scores; versus, every player. */
@@ -1005,17 +1034,17 @@ function updateScoreboard(g: Game) {
     ];
     if (g.mode.levels) rows.unshift(['level', String(g.level)]);
     const key = boardKey(g.mode.id);
-    const top = key ? [...(data.boards[key] ?? [])] : [];
+    const top = key ? topScores(key) : { rows: [], global: false };
     // Where this run would place right now.
     const now = { name: 'you (now)', score: p.score, now: true };
-    const ranked = [...top.map((r) => ({ name: r.name, score: r.score, now: false })), now].sort((a, b) => b.score - a.score).slice(0, 8);
+    const ranked = [...top.rows.map((r) => ({ name: r.name, score: r.score, now: false })), now].sort((a, b) => b.score - a.score).slice(0, 10);
     const list = ranked
       .map((r, i) => `<li class="${r.now ? 'me' : ''}"><span>${i + 1}</span><span>${esc(r.name || 'guest')}</span><span>${r.score.toLocaleString()}</span></li>`)
       .join('');
     html =
       `<div class="board-big">${p.score.toLocaleString()}</div>` +
       `<dl class="board-rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` +
-      (key ? `<p class="board-sub">top scores (this device)</p><ul class="board-list">${list}</ul>` : '');
+      (key ? `<p class="board-sub">${top.global ? 'global top scores' : 'top scores (this device)'}</p><ul class="board-list">${list}</ul>` : '');
   }
   if (html === boardHtml) return;
   boardHtml = html;

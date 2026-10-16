@@ -55,7 +55,7 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 ## Play screen
 
 - **Legend (left):** what everything on the board means, drawn in the current theme and limited to what the mode or level can contain.
-- **Scoreboard (right):** your live score, length, combo, time and best, plus this device's top scores with where the current run would place. In versus it lists every player with their round wins.
+- **Scoreboard (right):** your live score, length, combo, time and best, plus the global top scores (this device's for zen, endless and custom, or when offline) with where the current run would place. In versus it lists every player with their round wins.
 - **Level intro:** when a level starts, a pop-up explains it (goal, twists, hazards, bosses, your snake's ability). Click or press Enter to play. `set intros off` (or the checkbox) turns it off. Online matches skip it.
 - The side panels need a wide screen (about 1300px); on phones and small windows they're hidden.
 
