@@ -46,7 +46,7 @@ var ARENAS = {
 	box: {
 		id: "box",
 		name: "Classic Box",
-		blurb: "Four walls. No excuses.",
+		blurb: "An open board. The edges loop around.",
 		wrap: false,
 		walls: [],
 		portals: [],
@@ -1420,6 +1420,12 @@ var Game = class Game {
 			y: r + ((p.y - r) % sh + sh) % sh
 		};
 	}
+	/** Chebyshev distance the short way round, since every board wraps. */
+	reach(a, b) {
+		const dx = Math.abs(a.x - b.x);
+		const dy = Math.abs(a.y - b.y);
+		return Math.max(Math.min(dx, this.w - dx), Math.min(dy, this.h - dy));
+	}
 	/** Inside a closed collapse ring. */
 	inRing(p) {
 		const r = this.ring;
@@ -1440,8 +1446,9 @@ var Game = class Game {
 	ripensAt(p) {
 		return this.world ? biomeAt(this.world, p).modifiers.includes("ripening") : this.modifiers.has("ripening");
 	}
+	/** Every board wraps: walls never kill, in any mode. */
 	get wraps() {
-		return this.arena.wrap;
+		return true;
 	}
 	get foodsForLevel() {
 		return this.spec.goalFoods;
@@ -1961,10 +1968,7 @@ var Game = class Game {
 	/** Move a player one cell. Returns false if it died, was stopped, or the level changed. */
 	advance(p, dashing) {
 		let head = add(p.body[0], DIRS[p.dir]);
-		if (!this.inb(head) || this.wraps && this.inRing(head)) {
-			if (this.wraps) head = this.wrapAt(head);
-			else return this.hurt(p, "wall", p.body[0]);
-		}
+		if (!this.inb(head) || this.inRing(head)) head = this.wrapAt(head);
 		const exit = this.portalExit(head);
 		if (exit) {
 			this.events.push({
@@ -1974,7 +1978,6 @@ var Game = class Game {
 			});
 			head = { ...exit };
 		}
-		if (this.solid[this.ix(head)]) return this.hurt(p, "wall", head);
 		if (this.bossAt(head)) return this.hurt(p, "boss", head);
 		const si = this.shedWalls.findIndex((w) => eq(w.pos, head));
 		if (si >= 0) {
@@ -2106,7 +2109,7 @@ var Game = class Game {
 	}
 	deadlyFor(p, c) {
 		if (!this.inb(c)) return !this.wraps;
-		if (this.solid[this.ix(c)] || this.bossAt(c)) return true;
+		if (this.bossAt(c)) return true;
 		if (this.shedWalls.some((w) => eq(w.pos, c))) return true;
 		if (this.mines.some((m) => eq(m.pos, c) && this.mineLit(m))) return true;
 		if (this.rival?.body.some((s) => eq(s, c))) return true;
@@ -2802,7 +2805,7 @@ var Game = class Game {
 		let foods = 0;
 		for (const pk of [...this.pickups]) {
 			if (pk.kind !== "food") continue;
-			if (chebyshev(pk.pos, head) > FOOD_LEASH) this.pickups.splice(this.pickups.indexOf(pk), 1);
+			if (this.reach(pk.pos, head) > FOOD_LEASH) this.pickups.splice(this.pickups.indexOf(pk), 1);
 			else foods++;
 		}
 		if (foods < ENDLESS_FOOD) this.spawnPickup("food", Infinity);

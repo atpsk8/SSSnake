@@ -6,7 +6,7 @@ import { Runner } from '../src/runner.ts';
 import { GET, POST } from './scores.js';
 import { GET as GET_REPLAY } from './replay.js';
 
-/** An honest finished arcade run: chase food, then stop steering and crash. */
+/** An honest finished arcade run: chase food, then curl up and bite its own body. */
 function honestRun(seed) {
   const g = new Game({ mode: 'arcade', seed, classes: ['racer'] });
   const r = new Runner(g);
@@ -26,6 +26,10 @@ function honestRun(seed) {
         return Math.abs(da.x - food.pos.x) + Math.abs(da.y - food.pos.y) - (Math.abs(db.x - food.pos.x) + Math.abs(db.y - food.pos.y));
       })[0];
       if (best && best !== me.dir) r.input({ p: 0, t: 'turn', d: best });
+    } else if (food && !me.queue.length) {
+      // Walls don't kill, so turn clockwise every step until the snake runs into itself.
+      const cw = { up: 'right', right: 'down', down: 'left', left: 'up' };
+      r.input({ p: 0, t: 'turn', d: cw[me.dir] });
     }
     r.tick(16);
   }

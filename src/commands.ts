@@ -431,6 +431,7 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('TOUCH', 'title');
         t.print('  swipe turn   two-finger tap shed   double-tap or hold ability');
         t.print('MECHANICS', 'title');
+        t.print('  WALLS  never kill: edges wrap around and snakes pass through walls');
         t.print('  COIL   close a loop with your body (and shed skin): everything inside is captured');
         t.print('  SHED   drop half your tail as a wall for 15s. bosses fall for it');
         t.print("  HEX    versus only: the shed key costs 2 tail segments and flips the other snake's controls for 2.5s (8s cooldown)");

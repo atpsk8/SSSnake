@@ -49,7 +49,7 @@ export const ARENAS: Record<Exclude<ArenaId, 'custom' | 'world'>, Arena> = {
   box: {
     id: 'box',
     name: 'Classic Box',
-    blurb: 'Four walls. No excuses.',
+    blurb: 'An open board. The edges loop around.',
     wrap: false,
     walls: [],
     portals: [],

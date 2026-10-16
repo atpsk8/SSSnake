@@ -68,7 +68,18 @@ describe('survival', () => {
   it('armour absorbs a lethal hit and bounces you', () => {
     const g = make();
     g.p0.armour = 1;
-    g.snake = Array.from({ length: 8 }, (_, i) => ({ x: 23 - i, y: 5 }));
+    // Coiled so the next step up runs into its own body.
+    g.snake = [
+      { x: 5, y: 5 },
+      { x: 5, y: 6 },
+      { x: 6, y: 6 },
+      { x: 6, y: 5 },
+      { x: 6, y: 4 },
+      { x: 5, y: 4 },
+      { x: 4, y: 4 },
+      { x: 3, y: 4 },
+    ];
+    g.p0.dir = 'up';
     g.step();
     expect(g.status).toBe('playing');
     expect(g.p0.armour).toBe(0);
@@ -79,6 +90,8 @@ describe('survival', () => {
     const g = make();
     expect(g.rewinds).toBe(1);
     g.snake = Array.from({ length: 4 }, (_, i) => ({ x: 8 - i, y: 5 }));
+    // Walls don't kill any more: a long-lived shed wall ahead does.
+    g.shedWalls = [{ pos: { x: 20, y: 5 }, ttl: 1e9, maxTtl: 1e9, owner: 0 }];
     for (let i = 0; i < 200 && g.status === 'playing'; i++) g.update(50);
     expect(g.rewindsUsed).toBe(1);
     expect(g.status).toBe('over');

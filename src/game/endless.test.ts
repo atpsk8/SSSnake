@@ -240,7 +240,9 @@ describe('endless soak', () => {
           expect(g.inb(q.pos)).toBe(true);
           expect(g.solid[g.ix(q.pos)]).toBe(0);
         }
-        for (const q of food) expect(chebyshev(q.pos, p.body[0])).toBeLessThanOrEqual(26);
+        // Food is tended on world steps (leash 24); between them a surging snake can take a couple
+        // of steps of its own, plus a Viper dash of 3.
+        for (const q of food) expect(g.reach(q.pos, p.body[0])).toBeLessThanOrEqual(30);
         expect(g.biome).toBe(g.biomeAt(p.body[0])!.id);
         biomes.add(g.biome!);
       }

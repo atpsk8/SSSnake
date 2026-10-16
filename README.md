@@ -54,6 +54,7 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 
 ## Mechanics in brief
 
+- **Walls never kill:** in every mode the edges wrap around and snakes pass straight through walls. You can still crash into snakes (your own body included), shed skin, mines, rivals and bosses.
 - **Coil:** close a loop with your body (your shed skin counts) and everything inside is captured.
 - **Shed:** drop half your tail as a 15-second wall.
 - **Hex (versus only):** in versus the shed key casts Hex instead. It costs 2 tail segments and needs a length of 6. Your opponent flashes for 0.4 s, then their controls are flipped for 2.5 s. Cooldown 8 s (5 s in sudden death), no hexes in the first 3 s of a round, and a hexed snake is immune for 3 s afterwards.

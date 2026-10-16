@@ -41,12 +41,21 @@ describe('core movement', () => {
     expect(g.snake[0]).toEqual({ x: 4, y: 11 });
   });
 
-  it('dies leaving the board in a walled arena', () => {
+  it('wraps around the edge in every mode', () => {
     const g = make('classic');
     g.snake = line(23, 5, 4);
     g.step();
-    expect(g.status).toBe('over');
-    expect(g.deathCause).toBe('wall');
+    expect(g.status).toBe('playing');
+    expect(g.snake[0]).toEqual({ x: 0, y: 5 });
+  });
+
+  it('passes straight through walls', () => {
+    const g = make('classic');
+    g.snake = line(10, 5, 4);
+    g.solid[g.ix({ x: 11, y: 5 })] = 1;
+    g.step();
+    expect(g.status).toBe('playing');
+    expect(g.snake[0]).toEqual({ x: 11, y: 5 });
   });
 
   it('wraps around in the wrap arena', () => {
