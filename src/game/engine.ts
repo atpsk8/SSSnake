@@ -70,7 +70,10 @@ const MAZE_SHIFT_EVERY = 4;
 const COLLAPSE_EVERY_MS = 7000;
 const COLLAPSE_WARN_MS = 2000;
 const COLLAPSE_MAX_RING = 7;
-const VERSUS_SUDDEN_DEATH_MS = 90000;
+const VERSUS_SUDDEN_DEATH_MS = 60000;
+/** Versus sudden death also shrinks the board: one ring every few seconds, down to this side. */
+const VERSUS_RING_MS = 5000;
+const VERSUS_MIN_SIDE = 16;
 /** Versus sudden death: both snakes speed up by this factor every step, down to the floor. */
 const SUDDEN_DEATH_STEP_MS = 10000;
 const SUDDEN_DEATH_SPEEDUP = 0.85;
@@ -102,6 +105,8 @@ export interface Player {
   acc: number;
   meter: number;
   held: boolean;
+  /** A hold ability ran the meter dry: it stays off until the key is released. */
+  drained: boolean;
   wasActive: boolean;
   shedCooldown: number;
   effects: Partial<Record<EffectKind, number>>;
@@ -222,6 +227,7 @@ function newPlayer(id: number, cls: SnakeClass): Player {
     acc: 0,
     meter: 1,
     held: false,
+    drained: false,
     wasActive: false,
     shedCooldown: 0,
     effects: {},
@@ -411,8 +417,23 @@ export class Game {
     return p.x >= 0 && p.y >= 0 && p.x < this.w && p.y < this.h;
   }
 
+  /** Wrap a cell back onto the board. On a shrinking wraparound board the closed rings are skipped. */
   wrapAt(p: Vec): Vec {
-    return { x: (p.x + this.w) % this.w, y: (p.y + this.h) % this.h };
+    const r = this.wraps ? this.ring : 0;
+    const sw = this.w - 2 * r;
+    const sh = this.h - 2 * r;
+    return { x: r + ((((p.x - r) % sw) + sw) % sw), y: r + ((((p.y - r) % sh) + sh) % sh) };
+  }
+
+  /** Inside a closed collapse ring. */
+  inRing(p: Vec): boolean {
+    const r = this.ring;
+    return r > 0 && (p.x < r || p.y < r || p.x >= this.w - r || p.y >= this.h - r);
+  }
+
+  /** How far the collapse may close in. */
+  get maxRing(): number {
+    return this.mode.id === 'versus' ? Math.max(0, (Math.min(this.w, this.h) - VERSUS_MIN_SIDE) / 2) : COLLAPSE_MAX_RING;
   }
 
   ix(p: Vec): number {
@@ -498,11 +519,11 @@ export class Game {
   }
 
   isSurging(p: Player): boolean {
-    return p.cls === 'racer' && p.held && p.meter > 0 && this.abilityLive(p);
+    return p.cls === 'racer' && p.held && !p.drained && p.meter > 0 && this.abilityLive(p);
   }
 
   isHunkering(p: Player): boolean {
-    return p.cls === 'python' && p.held && p.meter > 0 && this.abilityLive(p);
+    return p.cls === 'python' && p.held && !p.drained && p.meter > 0 && this.abilityLive(p);
   }
 
   get baseInterval(): number {
@@ -606,7 +627,7 @@ export class Game {
 
   /** True during the warning window before the next ring closes. */
   get collapseWarning(): boolean {
-    return this.collapseActive && this.ring < COLLAPSE_MAX_RING && this.collapseTimer <= COLLAPSE_WARN_MS;
+    return this.collapseActive && this.ring < this.maxRing && this.collapseTimer <= COLLAPSE_WARN_MS;
   }
 
   // ---------------------------------------------------------------- input
@@ -648,6 +669,7 @@ export class Game {
     if (!p) return;
     const wasHeld = p.held;
     p.held = held;
+    if (!held) p.drained = false;
     if (held && !wasHeld && !CLASSES[p.cls].hold) this.useAbility(p);
   }
 
@@ -806,7 +828,11 @@ export class Game {
       this.tickHex(p, dt);
       const def = CLASSES[p.cls];
       const active = this.isSurging(p) || this.isHunkering(p);
-      if (active) p.meter = Math.max(0, p.meter - dt * def.cost * (this.has('adrenaline') ? 0.6 : 1));
+      if (active) {
+        p.meter = Math.max(0, p.meter - dt * def.cost * (this.has('adrenaline') ? 0.6 : 1));
+        // Without this, a held key flickers the ability on and off as the meter trickles back.
+        if (p.meter === 0) p.drained = true;
+      }
       else p.meter = Math.min(1, p.meter + dt * METER_REGEN_PER_MS);
       if (active && !p.wasActive) this.events.push({ type: 'ability', cls: p.cls, player: p.id });
       p.wasActive = active;
@@ -882,14 +908,17 @@ export class Game {
       if (this.mazeWarn <= 0) this.applyMaze();
     }
 
-    // Versus sudden death: no closing walls (the board wraps), both snakes just keep speeding up.
-    if (this.suddenDeath && this.time - dt < VERSUS_SUDDEN_DEATH_MS) {
-      this.banner = { title: 'Sudden death', subtitle: 'Faster and faster', ttl: BANNER_MS };
+    // Versus sudden death: both snakes keep speeding up and the board shrinks. The closing walls
+    // wrap like the edges do, so they squeeze the snakes together rather than killing them.
+    if (this.suddenDeath && !this.collapseActive) {
+      this.banner = { title: 'Sudden death', subtitle: 'Faster, and the arena shrinks', ttl: BANNER_MS };
+      this.collapseActive = true;
+      this.collapseTimer = COLLAPSE_WARN_MS + 500;
     }
-    if (this.collapseActive && this.ring < COLLAPSE_MAX_RING) {
+    if (this.collapseActive && this.ring < this.maxRing) {
       this.collapseTimer -= dt;
       if (this.collapseTimer <= 0) {
-        this.collapseTimer = COLLAPSE_EVERY_MS;
+        this.collapseTimer = this.mode.id === 'versus' ? VERSUS_RING_MS : COLLAPSE_EVERY_MS;
         this.ring++;
         this.rebuildSolid();
         this.evictFromSolid();
@@ -952,7 +981,7 @@ export class Game {
   /** Move a player one cell. Returns false if it died, was stopped, or the level changed. */
   private advance(p: Player, dashing: boolean): boolean {
     let head = add(p.body[0], DIRS[p.dir]);
-    if (!this.inb(head)) {
+    if (!this.inb(head) || (this.wraps && this.inRing(head))) {
       if (this.wraps) head = this.wrapAt(head);
       else return this.hurt(p, 'wall', p.body[0]);
     }

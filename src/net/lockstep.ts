@@ -24,7 +24,8 @@ export type NetMsg =
   | { k: 'bye' };
 
 // 2: the shed key casts Hex in versus. 3: 48x48 wraparound board, speed-up sudden death.
-export const PROTOCOL_VERSION = 3;
+// 4: hold abilities stay off once drained until released.
+export const PROTOCOL_VERSION = 4;
 
 /** Cheap FNV-1a fingerprint of the parts of the state that matter for desync detection. */
 export function hashGame(g: Game): number {

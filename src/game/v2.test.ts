@@ -307,3 +307,53 @@ describe('modes', () => {
     expect(g.trail.length).toBe(8);
   });
 });
+
+describe('hold abilities', () => {
+  it('a drained meter keeps surge off until the key is released', () => {
+    const g = new Game({ mode: 'zen', seed: 1 });
+    g.banner = null;
+    g.p0.meter = 0.05;
+    g.setHeld(0, true);
+    let sounds = 0;
+    for (let i = 0; i < 125; i++) {
+      g.update(16);
+      sounds += g.drainEvents().filter((e) => e.type === 'ability').length;
+    }
+    expect(sounds).toBe(1);
+    expect(g.isSurging(g.p0)).toBe(false);
+    g.setHeld(0, false);
+    g.setHeld(0, true);
+    expect(g.isSurging(g.p0)).toBe(true);
+  });
+});
+
+describe('versus sudden death', () => {
+  it('starts at 60s, speeds up, and shrinks a wrapping board', () => {
+    const g = new Game({ mode: 'versus', seed: 2 });
+    g.banner = null;
+    // Park both snakes in the middle, away from everything, and run the clock.
+    g.time = 59_990;
+    g.update(16);
+    expect((g.banner as { title: string } | null)?.title).toBe('Sudden death');
+    expect(g.suddenDeathPace).toBeLessThan(1);
+    for (let i = 0; i < 60; i++) {
+      g.banner = null;
+      for (const p of g.players) p.acc = 0;
+      g.update(500);
+    }
+    expect(g.ring).toBeGreaterThan(0);
+    expect(g.ring).toBeLessThanOrEqual(g.maxRing);
+    // A snake walking into the closed ring comes out on the far side of the open square.
+    const r = g.ring;
+    const p = g.players[0];
+    p.body = [{ x: r, y: 20 }, { x: r + 1, y: 20 }, { x: r + 2, y: 20 }];
+    p.prevBody = p.body.map((c) => ({ ...c }));
+    p.dir = 'left';
+    p.queue = [];
+    p.alive = true;
+    g.status = 'playing';
+    g.step();
+    expect(p.alive).toBe(true);
+    expect(p.body[0]).toEqual({ x: g.w - 1 - r, y: 20 });
+  });
+});
