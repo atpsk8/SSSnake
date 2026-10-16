@@ -10,6 +10,7 @@ const STUN: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stu
 const POLL_MS = 1500;
 const CONNECT_TIMEOUT_MS = 20000;
 const ROOM_LIFETIME_MS = 10 * 60 * 1000;
+const DISCONNECT_GRACE_MS = 5000;
 const KINDS = new Set(['hello', 'start', 'in', 'hash', 'ready', 'ping', 'pong', 'bye']);
 
 export class NetError extends Error {}
@@ -33,8 +34,13 @@ export class PeerLink {
     };
     const down = () => this.shutdown();
     ch.onclose = down;
+    // 'disconnected' is often a brief network blip that recovers by itself; give it a moment.
+    let blip: ReturnType<typeof setTimeout> | undefined;
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') down();
+      const s = pc.connectionState;
+      clearTimeout(blip);
+      if (s === 'failed' || s === 'closed') down();
+      else if (s === 'disconnected') blip = setTimeout(down, DISCONNECT_GRACE_MS);
     };
   }
 

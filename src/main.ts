@@ -579,8 +579,36 @@ function startOnline(role: 'host' | 'guest', link: PeerLink) {
   });
 }
 
+const RERUN_KEY = 'sssnake.rerun';
+
+/**
+ * Online play needs both players on the same build (lockstep). A tab opened before a deploy
+ * keeps the old code, and opening a #join link in it doesn't reload, so check the live page's
+ * bundle name first and reload into the new build if it changed. Returns true when reloading.
+ */
+async function reloadIfStale(t: Terminal, rerun: string): Promise<boolean> {
+  const mine = document.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/index-"]')?.src;
+  if (!mine) return false; // dev server: no bundle
+  try {
+    const html = await (await fetch(location.pathname, { cache: 'no-store' })).text();
+    const live = /\/assets\/index-[\w-]+\.js/.exec(html)?.[0];
+    if (!live || new URL(mine).pathname === live) return false;
+  } catch {
+    return false;
+  }
+  t.print('a new version of SSSnake is out. updating...', 'ok');
+  try {
+    sessionStorage.setItem(RERUN_KEY, rerun);
+  } catch {
+    /* storage blocked: the player retypes the command */
+  }
+  location.reload();
+  return true;
+}
+
 async function invite(t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
+  if (await reloadIfStale(t, 'invite')) return;
   t.print('opening room...', 'dim');
   try {
     const link = await hostRoom({
@@ -609,6 +637,7 @@ async function invite(t: Terminal, signal: AbortSignal) {
 
 async function join(code: string, t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
+  if (await reloadIfStale(t, `join ${code}`)) return;
   t.print(`connecting to room ${code.toUpperCase()}...`, 'dim');
   try {
     const link = await joinRoom(code, { signal, onStatus: (s) => t.print(s, 'dim') });
@@ -620,6 +649,7 @@ async function join(code: string, t: Terminal, signal: AbortSignal) {
 
 async function quick(t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
+  if (await reloadIfStale(t, 'match')) return;
   t.print('looking for an opponent...', 'dim');
   try {
     const { link, role } = await quickMatch({
@@ -1142,9 +1172,20 @@ function boot() {
   ];
   term.boot(lines, data.settings.reducedMotion, () => {
     const joinCode = /[#&]join=([A-Za-z0-9]{4})/.exec(location.hash)?.[1];
+    let rerun: string | null = null;
+    try {
+      rerun = sessionStorage.getItem(RERUN_KEY);
+      sessionStorage.removeItem(RERUN_KEY);
+    } catch {
+      /* storage blocked */
+    }
     if (joinCode) {
       clearHash();
       void term.exec(`join ${joinCode}`, true);
+    } else if (rerun && /^(invite|match|join [A-Za-z0-9]{4})$/.test(rerun)) {
+      // Picked up a new build on the way into online play: carry on with the same command.
+      term.print('updated to the latest version.', 'ok');
+      void term.exec(rerun, true);
     } else if (pendingChallenge) announceChallenge();
   });
 }

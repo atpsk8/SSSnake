@@ -43,7 +43,9 @@ export class OnlineMatch {
     this.names[this.me] = myName || `P${this.me + 1}`;
     this.classes[this.me] = myCls;
     link.onmessage = (m) => this.receive(m);
-    link.onclose = () => this.end('Connection lost.');
+    // Dropping before the hello usually means the other side is on an older build and hung up.
+    link.onclose = () =>
+      this.end(this.peerHello ? 'Connection lost.' : 'The link dropped before the match started. Both players should refresh the page and try again.');
     link.send({ k: 'hello', v: PROTOCOL_VERSION, name: myName, cls: myCls });
     if (role === 'host') link.send({ k: 'ping', t: performance.now() });
   }
