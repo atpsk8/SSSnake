@@ -1,5 +1,6 @@
 import type { Game, Player } from './game/engine';
 import { DIRS, H, W, type Dir, type GameEvent, type PickupKind, type Vec } from './game/types';
+import { BIOMES, CHUNK, LANDMARK_NAME, type BiomeId } from './game/world';
 import type { PaletteId, SkinId } from './storage';
 import { THEMES, type Palette, type ThemeDef, type ThemeId } from './themes';
 
@@ -8,6 +9,8 @@ import { THEMES, type Palette, type ThemeDef, type ThemeId } from './themes';
  *  - grid  (terminal, nokia, gameboy): blocks and characters on a cell grid.
  *  - soft  (paper, minimal): continuous rounded bodies and drawn shapes.
  * Bodies slide smoothly between cells; the static board is cached; effects pulse gently.
+ * Boards bigger than 24x24 (Endless) are drawn through a follow camera showing 24 cells
+ * across, with a minimap in the corner.
  */
 
 export const POWER_LABEL: Record<string, string> = {
@@ -57,6 +60,17 @@ interface Ring {
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+/** Endless biome tint over the floor: a palette key (or a colour) and its strength. */
+const BIOME_TINT: Record<BiomeId, [string, number]> = {
+  meadow: ['fg', 0],
+  glacier: ['fg', 0.07],
+  shadow: ['#000000', 0.22],
+  orchard: ['accent', 0.06],
+  vortex: ['rival', 0.07],
+  circuit: ['lines', 0.35],
+  badlands: ['danger', 0.06],
+};
+
 /** Top-left cell coordinates between the previous and current step; snaps across wraps/portals. */
 function slide(cur: Vec[], prev: Vec[], t: number): Vec[] {
   return cur.map((c, i) => {
@@ -94,6 +108,16 @@ export class Renderer {
   marker: Vec | null = null;
   /** Instant-replay camera: zoom toward a cell. */
   camera: { x: number; y: number; zoom: number } | null = null;
+  /** Big boards: the view centre (in cells) and zoom; null when the whole board fits. */
+  private view: { x: number; y: number; zoom: number } | null = null;
+  private follow: Vec | null = null;
+  private mini = document.createElement('canvas');
+  private miniKey = '';
+  private lastBiome: BiomeId | null = null;
+  private landmarksSeen = new Set<number>();
+  /** Endless chunks that have been on screen (the minimap only shows these). */
+  private explored = new Uint8Array(0);
+  private exploredCount = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext('2d');
@@ -147,6 +171,11 @@ export class Renderer {
     this.shake = 0;
     this.flash = 0;
     this.ghost = null;
+    this.follow = null;
+    this.lastBiome = null;
+    this.landmarksSeen.clear();
+    this.explored = new Uint8Array(0);
+    this.exploredCount = 0;
   }
 
   playerColor(id: number): string {
@@ -372,27 +401,44 @@ export class Renderer {
       ctx.fillRect(0, 0, size, size);
       ctx.translate(Math.round((Math.random() - 0.5) * this.shake), Math.round((Math.random() - 0.5) * this.shake));
     }
-    this.drawBoard(game);
-    if (this.camera && this.camera.zoom > 1.001) {
-      const { zoom } = this.camera;
+    const big = game.w > W || game.h > H;
+    if (big) {
+      this.followCamera(game, dt);
+      const v = this.view!;
       ctx.fillStyle = p.bg;
       ctx.fillRect(0, 0, size, size);
-      // Keep the view inside the board.
-      const half = size / 2 / zoom;
-      const cx = Math.min(size - half, Math.max(half, (this.camera.x + 0.5) * cell));
-      const cy = Math.min(size - half, Math.max(half, (this.camera.y + 0.5) * cell));
-      ctx.translate(size / 2, size / 2);
-      ctx.scale(zoom, zoom);
-      ctx.translate(-cx, -cy);
+      // Whole device pixels when not zooming, so grid themes stay crisp.
+      const snap = (n: number) => (v.zoom === 1 ? Math.round(n * this.dpr) / this.dpr : n);
+      ctx.translate(snap(size / 2 - v.x * cell * v.zoom), snap(size / 2 - v.y * cell * v.zoom));
+      ctx.scale(v.zoom, v.zoom);
+      this.drawBoardView(game);
+      this.announce(game);
+    } else {
+      this.view = null;
+      this.drawBoard(game);
+      if (this.camera && this.camera.zoom > 1.001) {
+        const { zoom } = this.camera;
+        ctx.fillStyle = p.bg;
+        ctx.fillRect(0, 0, size, size);
+        // Keep the view inside the board.
+        const half = size / 2 / zoom;
+        const cx = Math.min(size - half, Math.max(half, (this.camera.x + 0.5) * cell));
+        const cy = Math.min(size - half, Math.max(half, (this.camera.y + 0.5) * cell));
+        ctx.translate(size / 2, size / 2);
+        ctx.scale(zoom, zoom);
+        ctx.translate(-cx, -cy);
+      }
+      ctx.drawImage(this.board, 0, 0, size, size);
     }
-    ctx.drawImage(this.board, 0, 0, size, size);
 
     if (this.beat > 0) {
-      ctx.globalAlpha = this.beat * 0.8;
-      ctx.strokeStyle = p.bright;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(1, 1, size - 2, size - 2);
-      ctx.globalAlpha = 1;
+      this.onScreen(() => {
+        ctx.globalAlpha = this.beat * 0.8;
+        ctx.strokeStyle = p.bright;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, size - 2, size - 2);
+        ctx.globalAlpha = 1;
+      });
     }
 
     if (this.coilFlash) {
@@ -419,7 +465,10 @@ export class Renderer {
     for (const pl of game.players) this.drawPlayer(game, pl);
     this.drawProjectiles(game);
 
-    if (game.modifiers.has('dark')) this.drawDarkness(game);
+    if (this.view && game.world) {
+      const rects = this.darkRects(game);
+      if (rects.length) this.drawDarkness(game, rects);
+    } else if (game.modifiers.has('dark')) this.drawDarkness(game);
 
     for (const r of this.rings) {
       const t = 1 - r.life / r.max;
@@ -463,7 +512,8 @@ export class Renderer {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const w = ctx.measureText(pu.text).width;
-      const x = Math.min(size - w / 2 - 4, Math.max(w / 2 + 4, pu.x * cell));
+      const [left, right] = this.view ? [(this.view.x - W / 2 / this.view.zoom) * cell, (this.view.x + W / 2 / this.view.zoom) * cell] : [0, size];
+      const x = Math.min(right - w / 2 - 4, Math.max(left + w / 2 + 4, pu.x * cell));
       const y = pu.y * cell;
       if (soft) {
         ctx.lineWidth = 4;
@@ -479,7 +529,7 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
 
-    if (game.boss) this.drawBossBar(game);
+    if (game.boss) this.onScreen(() => this.drawBossBar(game));
 
     if (this.marker) {
       ctx.strokeStyle = p.bright;
@@ -490,11 +540,15 @@ export class Renderer {
     }
 
     if (game.players.some((pl) => pl.alive && pl.effects.slowmo)) {
-      ctx.fillStyle = soft ? '#6aa3d9' : p.fg;
-      ctx.globalAlpha = 0.035 + this.pulse(1600) * 0.02;
-      ctx.fillRect(0, 0, size, size);
-      ctx.globalAlpha = 1;
+      this.onScreen(() => {
+        ctx.fillStyle = soft ? '#6aa3d9' : p.fg;
+        ctx.globalAlpha = 0.035 + this.pulse(1600) * 0.02;
+        ctx.fillRect(0, 0, size, size);
+        ctx.globalAlpha = 1;
+      });
     }
+
+    if (big && game.world) this.onScreen(() => this.drawMinimap(game));
 
     ctx.restore();
     // restore() also reverts the font, so forget the cached one.
@@ -575,13 +629,248 @@ export class Renderer {
       for (let x = 0; x < W; x++) {
         if (!solid[y * W + x]) continue;
         const ring = x < game.ring || y < game.ring || x >= W - game.ring || y >= H - game.ring;
-        if (this.soft) this.softWall(x, y, ring, c);
-        else if (ring) this.block(x, y, p.dim, 'shade', 0.5, c);
-        else {
-          this.block(x, y, p.dim, 'solid', this.theme.wallGlyph ? 0.7 : 1, c);
-          if (this.theme.wallGlyph) this.glyph('#', x, y, p.bg, 0.7, 0.7, this.theme.font, c);
+        this.wallCell(x, y, ring, c);
+      }
+    }
+  }
+
+  private wallCell(x: number, y: number, ring: boolean, c: CanvasRenderingContext2D) {
+    const p = this.palette;
+    if (this.soft) this.softWall(x, y, ring, c);
+    else if (ring) this.block(x, y, p.dim, 'shade', 0.5, c);
+    else {
+      this.block(x, y, p.dim, 'solid', this.theme.wallGlyph ? 0.7 : 1, c);
+      if (this.theme.wallGlyph) this.glyph('#', x, y, p.bg, 0.7, 0.7, this.theme.font, c);
+    }
+  }
+
+  // ---------------------------------------------------------------- big boards (Endless)
+
+  /** Ease the view toward a point a little ahead of the head (or the replay focus). */
+  private followCamera(game: Game, dt: number) {
+    let target: Vec;
+    let zoom = 1;
+    if (this.camera) {
+      target = { x: this.camera.x + 0.5, y: this.camera.y + 0.5 };
+      zoom = Math.max(1, this.camera.zoom);
+    } else {
+      const pl = game.players.find((q) => q.alive && q.body.length) ?? game.p0;
+      if (pl.body.length) {
+        const h = game.status === 'over' ? pl.body[0] : slide(pl.body.slice(0, 1), pl.prevBody.slice(0, 1), game.alphaFor(pl))[0];
+        const d = game.status === 'over' ? { x: 0, y: 0 } : DIRS[pl.dir];
+        target = { x: h.x + 0.5 + d.x * 2, y: h.y + 0.5 + d.y * 2 };
+      } else target = { x: game.w / 2, y: game.h / 2 };
+    }
+    const f = this.follow;
+    if (!f || Math.abs(f.x - target.x) + Math.abs(f.y - target.y) > 14) this.follow = { ...target };
+    else {
+      const k = 1 - Math.pow(0.0005, dt / 1000);
+      f.x += (target.x - f.x) * k;
+      f.y += (target.y - f.y) * k;
+    }
+    const half = W / 2 / zoom;
+    const clamp = (n: number, max: number) => Math.min(max - half, Math.max(half, n));
+    this.view = { x: clamp(this.follow!.x, game.w), y: clamp(this.follow!.y, game.h), zoom };
+
+    if (game.world) {
+      const wd = game.world;
+      if (this.explored.length !== wd.cols * wd.rows) this.explored = new Uint8Array(wd.cols * wd.rows);
+      const [x0, y0, x1, y1] = this.viewCells(game, 0);
+      for (let cy = Math.floor(y0 / CHUNK); cy <= Math.floor(y1 / CHUNK); cy++) {
+        for (let cx = Math.floor(x0 / CHUNK); cx <= Math.floor(x1 / CHUNK); cx++) {
+          const i = cy * wd.cols + cx;
+          if (!this.explored[i]) {
+            this.explored[i] = 1;
+            this.exploredCount++;
+          }
         }
       }
+    }
+  }
+
+  /** Visible cell range [x0, y0, x1, y1] (inclusive), padded by `pad` cells. */
+  private viewCells(game: Game, pad = 1): [number, number, number, number] {
+    const v = this.view!;
+    const half = W / 2 / v.zoom + pad;
+    return [
+      Math.max(0, Math.floor(v.x - half)),
+      Math.max(0, Math.floor(v.y - half)),
+      Math.min(game.w - 1, Math.ceil(v.x + half)),
+      Math.min(game.h - 1, Math.ceil(v.y + half)),
+    ];
+  }
+
+  private inView(x: number, y: number, pad = 1.5): boolean {
+    const v = this.view;
+    if (!v) return true;
+    const half = W / 2 / v.zoom + pad;
+    return Math.abs(x + 0.5 - v.x) <= half && Math.abs(y + 0.5 - v.y) <= half;
+  }
+
+  /** Run `fn` in screen space (no camera) on big boards. */
+  private onScreen(fn: () => void) {
+    if (!this.view) return fn();
+    const { ctx } = this;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    fn();
+    ctx.restore();
+    this.lastFont = '';
+  }
+
+  private tint(key: string): string {
+    return (this.palette as unknown as Record<string, string>)[key] ?? key;
+  }
+
+  /** The visible part of a big board, drawn straight to the screen every frame. */
+  private drawBoardView(game: Game) {
+    const { ctx: c, cell } = this;
+    const p = this.palette;
+    const [x0, y0, x1, y1] = this.viewCells(game);
+    const wd = game.world;
+    if (wd) {
+      for (let cy = Math.floor(y0 / CHUNK); cy <= Math.floor(y1 / CHUNK); cy++) {
+        for (let cx = Math.floor(x0 / CHUNK); cx <= Math.floor(x1 / CHUNK); cx++) {
+          const [key, a] = BIOME_TINT[BIOMES[wd.biome[cy * wd.cols + cx]].id];
+          if (!a) continue;
+          c.globalAlpha = a;
+          c.fillStyle = this.tint(key);
+          c.fillRect(cx * CHUNK * cell, cy * CHUNK * cell, CHUNK * cell, CHUNK * cell);
+        }
+      }
+      c.globalAlpha = 1;
+    }
+    switch (this.theme.background) {
+      case 'dots':
+      case 'subtle': {
+        c.fillStyle = this.theme.background === 'dots' ? p.faint : p.lines;
+        const d = Math.max(1, Math.round(cell * (this.theme.background === 'dots' ? 0.08 : 0.1)));
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) c.fillRect(Math.round((x + 0.5) * cell) - d / 2, Math.round((y + 0.5) * cell) - d / 2, d, d);
+        }
+        break;
+      }
+      case 'lcd':
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) this.block(x, y, p.lines, 'solid', 1, c);
+        }
+        break;
+      case 'ruled':
+        c.strokeStyle = p.lines;
+        c.lineWidth = 1;
+        c.beginPath();
+        for (let y = Math.max(1, y0); y <= y1; y++) {
+          c.moveTo(x0 * cell, Math.round(y * cell) + 0.5);
+          c.lineTo((x1 + 1) * cell, Math.round(y * cell) + 0.5);
+        }
+        c.stroke();
+        break;
+    }
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) if (game.solid[y * game.w + x]) this.wallCell(x, y, false, c);
+    }
+  }
+
+  /** Pop the biome's name on entering it, and a landmark's when it first comes close. */
+  private announce(game: Game) {
+    const wd = game.world;
+    const head = game.p0.body[0];
+    if (!wd || !head || game.status !== 'playing' || this.camera) return;
+    const caps = (t: string) => (this.soft ? t.toLowerCase() : t.toUpperCase());
+    if (game.biome && game.biome !== this.lastBiome) {
+      this.lastBiome = game.biome;
+      const b = BIOMES.find((x) => x.id === game.biome)!;
+      this.popup(caps(b.name), { x: head.x, y: head.y - 2 }, this.palette.bright, 1.1);
+    }
+    wd.landmarks.forEach((l, i) => {
+      if (this.landmarksSeen.has(i) || Math.max(Math.abs(l.pos.x - head.x), Math.abs(l.pos.y - head.y)) > 7) return;
+      this.landmarksSeen.add(i);
+      this.popup(caps(LANDMARK_NAME[l.kind]), { x: l.pos.x, y: l.pos.y - 3 }, this.palette.gold, 0.9);
+    });
+  }
+
+  /** Shadowlands chunks in view, as [x, y, w, h] in cells. */
+  private darkRects(game: Game): [number, number, number, number][] {
+    const wd = game.world!;
+    const [x0, y0, x1, y1] = this.viewCells(game);
+    const out: [number, number, number, number][] = [];
+    for (let cy = Math.floor(y0 / CHUNK); cy <= Math.floor(y1 / CHUNK); cy++) {
+      for (let cx = Math.floor(x0 / CHUNK); cx <= Math.floor(x1 / CHUNK); cx++) {
+        if (BIOMES[wd.biome[cy * wd.cols + cx]].modifiers.includes('dark')) out.push([cx * CHUNK, cy * CHUNK, CHUNK, CHUNK]);
+      }
+    }
+    return out;
+  }
+
+  /** Explored map in the corner: biomes, walls, landmarks, food and where you are. */
+  private drawMinimap(game: Game) {
+    const wd = game.world!;
+    const { ctx, size } = this;
+    const p = this.palette;
+    const m = Math.round(Math.min(size * 0.24, 150));
+    const ox = size - m - 6;
+    const oy = 6;
+    const key = `${this.theme.id}|${p.bg}|${game.broken.size}|${this.exploredCount}`;
+    if (key !== this.miniKey) {
+      this.miniKey = key;
+      this.mini.width = game.w;
+      this.mini.height = game.h;
+      const g = this.mini.getContext('2d')!;
+      g.clearRect(0, 0, game.w, game.h);
+      for (let cy = 0; cy < wd.rows; cy++) {
+        for (let cx = 0; cx < wd.cols; cx++) {
+          if (!this.explored[cy * wd.cols + cx]) continue;
+          g.globalAlpha = 1;
+          g.fillStyle = p.bg;
+          g.fillRect(cx * CHUNK, cy * CHUNK, CHUNK, CHUNK);
+          const [tk, a] = BIOME_TINT[BIOMES[wd.biome[cy * wd.cols + cx]].id];
+          g.globalAlpha = Math.min(1, a * 3);
+          g.fillStyle = this.tint(tk);
+          g.fillRect(cx * CHUNK, cy * CHUNK, CHUNK, CHUNK);
+          g.globalAlpha = 1;
+          g.fillStyle = p.dim;
+          for (let y = cy * CHUNK; y < (cy + 1) * CHUNK; y++) {
+            for (let x = cx * CHUNK; x < (cx + 1) * CHUNK; x++) if (game.solid[y * game.w + x]) g.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    }
+    ctx.fillStyle = p.bg;
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(ox, oy, m, m);
+    ctx.globalAlpha = 0.9;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.mini, ox, oy, m, m);
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = p.dim;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox - 0.5, oy - 0.5, m + 1, m + 1);
+    const s = m / game.w;
+    const seen = (v: Vec) => this.explored[Math.floor(v.y / CHUNK) * wd.cols + Math.floor(v.x / CHUNK)] === 1;
+    for (const l of wd.landmarks) {
+      if (!seen(l.pos)) continue;
+      ctx.fillStyle = l.kind === 'shrine' ? p.gold : l.kind === 'crater' ? p.danger : this.soft ? p.rival : p.bright;
+      const r = Math.max(2, s * 2.5);
+      ctx.fillRect(ox + (l.pos.x + 0.5) * s - r / 2, oy + (l.pos.y + 0.5) * s - r / 2, r, r);
+    }
+    ctx.fillStyle = p.accent;
+    for (const pk of game.pickups) {
+      if (pk.kind === 'food') ctx.fillRect(ox + pk.pos.x * s - 0.5, oy + pk.pos.y * s - 0.5, Math.max(1.5, s), Math.max(1.5, s));
+    }
+    const v = this.view!;
+    const hv = W / 2 / v.zoom;
+    ctx.strokeStyle = p.fg;
+    ctx.globalAlpha = 0.55;
+    ctx.strokeRect(ox + (v.x - hv) * s, oy + (v.y - hv) * s, hv * 2 * s, hv * 2 * s);
+    ctx.globalAlpha = 1;
+    const head = game.p0.body[0];
+    if (head) {
+      const r = Math.max(3, s * 3);
+      ctx.fillStyle = p.bright;
+      ctx.globalAlpha = 0.6 + this.pulse(700) * 0.4;
+      ctx.fillRect(ox + (head.x + 0.5) * s - r / 2, oy + (head.y + 0.5) * s - r / 2, r, r);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -794,6 +1083,7 @@ export class Renderer {
     const { ctx, cell } = this;
     const p = this.palette;
     for (const w of game.wells) {
+      if (!this.inView(w.x, w.y, 2)) continue;
       const t = (this.clock / 1100) % 1;
       for (let k = 0; k < 3; k++) {
         const f = (t + k / 3) % 1;
@@ -816,6 +1106,7 @@ export class Renderer {
     const { ctx, cell } = this;
     const p = this.palette;
     for (const a of game.arrows) {
+      if (!this.inView(a.pos.x, a.pos.y)) continue;
       if (!this.soft) {
         this.block(a.pos.x, a.pos.y, p.faint);
         this.glyph(ARROW_GLYPH[a.dir], a.pos.x, a.pos.y, p.fg, 0.85, 0.7 + this.pulse(1400) * 0.3);
@@ -843,6 +1134,7 @@ export class Renderer {
     const p = this.palette;
     game.arena.portals.forEach((pair, i) => {
       for (const pt of pair) {
+        if (!this.inView(pt.x, pt.y)) continue;
         const label = String.fromCharCode(65 + i);
         if (this.soft) {
           this.circle(pt.x, pt.y, 0.42, undefined, p.rival, 2);
@@ -859,6 +1151,7 @@ export class Renderer {
   private drawShedWalls(game: Game) {
     const { ctx, cell } = this;
     for (const w of game.shedWalls) {
+      if (!this.inView(w.pos.x, w.pos.y)) continue;
       const alpha = w.ttl < 2000 ? 0.15 + (w.ttl / 2000) * 0.5 : 0.65 + (w.ttl / w.maxTtl) * 0.3;
       const color = this.playerColor(w.owner);
       if (!this.soft) {
@@ -884,6 +1177,7 @@ export class Renderer {
     const { ctx, cell } = this;
     const p = this.palette;
     for (const m of game.mines) {
+      if (!this.inView(m.pos.x, m.pos.y)) continue;
       const lit = game.mineLit(m);
       const warn = game.mineWarn(m);
       if (!this.soft) {
@@ -918,8 +1212,9 @@ export class Renderer {
 
   private drawPickups(game: Game) {
     const p = this.palette;
-    const ripening = game.modifiers.has('ripening');
     for (const pk of game.pickups) {
+      if (!this.inView(pk.pos.x, pk.pos.y)) continue;
+      const ripening = game.ripensAt(pk.pos);
       const a = pk.ttl < 2000 ? 0.35 + (pk.ttl / 2000) * 0.65 : 1;
       const { x, y } = pk.pos;
       if (this.soft) this.softPickup(pk.kind, x, y, a, ripening ? Math.min(1, pk.age / 16000) : 0);
@@ -1021,6 +1316,7 @@ export class Renderer {
     const p = this.palette;
     const t = game.worldAlpha;
     for (const m of game.mice) {
+      if (!this.inView(m.pos.x, m.pos.y)) continue;
       const jump = Math.abs(m.prev.x - m.pos.x) + Math.abs(m.prev.y - m.pos.y) > 1;
       const x = jump ? m.pos.x : lerp(m.prev.x, m.pos.x, t);
       const y = jump ? m.pos.y : lerp(m.prev.y, m.pos.y, t);
@@ -1185,8 +1481,14 @@ export class Renderer {
     }
   }
 
-  private drawDarkness(game: Game) {
+  /** Darkness over the whole board, or (big boards) over the given cell rects only. */
+  private drawDarkness(game: Game, rects?: [number, number, number, number][]) {
     const { ctx, cell, size } = this;
+    const v = this.view;
+    // Big boards draw the layer in screen space.
+    const sx = (x: number) => (v ? (x - v.x) * cell * v.zoom + size / 2 : x * cell);
+    const sy = (y: number) => (v ? (y - v.y) * cell * v.zoom + size / 2 : y * cell);
+    const k = v ? v.zoom : 1;
     const l = this.lctx;
     l.save();
     l.setTransform(1, 0, 0, 1, 0, 0);
@@ -1194,23 +1496,26 @@ export class Renderer {
     l.restore();
     l.fillStyle = this.soft ? '#1d2230' : this.palette.bg;
     l.globalAlpha = this.soft ? 0.9 : 0.95;
-    l.fillRect(0, 0, size, size);
+    if (rects) for (const [x, y, w, h] of rects) l.fillRect(sx(x), sy(y), w * cell * k, h * cell * k);
+    else l.fillRect(0, 0, size, size);
     l.globalAlpha = 1;
     l.globalCompositeOperation = 'destination-out';
     for (const pl of game.players) {
       if (!pl.alive || !pl.body.length) continue;
       const h = slide(pl.body.slice(0, 1), pl.prevBody.slice(0, 1), game.alphaFor(pl))[0];
-      const hx = (h.x + 0.5) * cell;
-      const hy = (h.y + 0.5) * cell;
-      const g = l.createRadialGradient(hx, hy, cell * 2, hx, hy, cell * 5.5);
+      const hx = sx(h.x + 0.5);
+      const hy = sy(h.y + 0.5);
+      const g = l.createRadialGradient(hx, hy, cell * 2 * k, hx, hy, cell * 5.5 * k);
       g.addColorStop(0, 'rgba(0,0,0,1)');
       g.addColorStop(1, 'rgba(0,0,0,0)');
       l.fillStyle = g;
       l.fillRect(0, 0, size, size);
     }
     l.globalCompositeOperation = 'source-over';
-    ctx.drawImage(this.layer, 0, 0, size, size);
+    this.onScreen(() => ctx.drawImage(this.layer, 0, 0, size, size));
+    const inDark = (q: Vec) => !rects || rects.some(([x, y, w, h]) => q.x >= x && q.y >= y && q.x < x + w && q.y < y + h);
     for (const pk of game.pickups) {
+      if (!this.inView(pk.pos.x, pk.pos.y) || !inDark(pk.pos)) continue;
       const a = 0.3 + this.pulse(1600) * 0.3;
       if (this.soft) {
         ctx.globalAlpha = a;

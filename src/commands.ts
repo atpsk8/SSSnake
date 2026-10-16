@@ -2,7 +2,7 @@ import { CLASSES, CLASS_ORDER } from './game/classes';
 import type { LevelData } from './game/levels';
 import { MODES } from './game/modes';
 import type { ModeId, SnakeClass } from './game/types';
-import { fetchGlobal } from './leaderboard';
+import { fetchGlobal, globalBoard } from './leaderboard';
 import { ACHIEVEMENTS, CLASS_UNLOCK, SKINS, isUnlocked } from './progress';
 import type { Challenge } from './share';
 import type { PaletteId, SaveData, SkinId } from './storage';
@@ -29,8 +29,8 @@ export interface AppCtx {
   updatePrompt(): void;
 }
 
-const PLAY_MODES: ModeId[] = ['arcade', 'classic', 'daily', 'zen', 'rhythm', 'versus'];
-const BOARDS: Record<string, string> = { arcade: 'arcade', classic: 'classic', rhythm: 'rhythm', daily: 'daily' };
+const PLAY_MODES: ModeId[] = ['arcade', 'classic', 'daily', 'zen', 'rhythm', 'endless', 'versus'];
+const BOARDS: Record<string, string> = { arcade: 'arcade', classic: 'classic', rhythm: 'rhythm', daily: 'daily', endless: 'endless' };
 
 export function buildCommands(app: AppCtx): Command[] {
   const s = () => app.data.settings;
@@ -130,7 +130,7 @@ export function buildCommands(app: AppCtx): Command[] {
           return;
         }
         t.print('GAME', 'title');
-        t.print('  {play} [mode]      arcade (default), classic, daily, zen, rhythm');
+        t.print('  {play} [mode]      arcade (default), classic, daily, zen, rhythm, endless');
         t.print('  {versus}           two players on this device;  {cpu} to play the computer');
         t.print('  {match}            play a random opponent online');
         t.print('  {invite}           host an online match and get a code');
@@ -138,7 +138,7 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('  {snake} [type]     list or pick your snake type');
         t.print('  {editor}           build levels;  {levels} to list saved ones');
         t.print('PROFILE', 'title');
-        t.print('  {scores} [board]   leaderboards: arcade, daily, classic, rhythm');
+        t.print('  {scores} [board]   leaderboards: arcade, daily, classic, rhythm, endless');
         t.print('  {trophies}         achievements and unlocks');
         t.print('  {theme} [name]     change the look: neo (3D), terminal, nokia, gameboy, paper, minimal');
         t.print('  {skin} [name]      snake skins');
@@ -151,7 +151,7 @@ export function buildCommands(app: AppCtx): Command[] {
     {
       name: 'play',
       aliases: ['run', 'start'],
-      usage: 'play [arcade|classic|daily|zen|rhythm|versus]',
+      usage: 'play [arcade|classic|daily|zen|rhythm|endless|versus]',
       desc: 'start a game',
       run(args, t) {
         const mode = (args[0]?.toLowerCase() ?? 'arcade') as ModeId;
@@ -160,7 +160,7 @@ export function buildCommands(app: AppCtx): Command[] {
         app.start(mode);
       },
     },
-    ...(['arcade', 'classic', 'daily', 'zen', 'rhythm'] as ModeId[]).map(
+    ...(['arcade', 'classic', 'daily', 'zen', 'rhythm', 'endless'] as ModeId[]).map(
       (m): Command => ({
         name: m,
         desc: `play ${MODES[m].name}: ${MODES[m].blurb}`,
@@ -289,13 +289,13 @@ export function buildCommands(app: AppCtx): Command[] {
     {
       name: 'scores',
       aliases: ['top', 'leaderboard', 'lb'],
-      usage: 'scores [arcade|daily|classic|rhythm] [--local]',
+      usage: 'scores [arcade|daily|classic|rhythm|endless] [--local]',
       desc: 'show a leaderboard',
       async run(args, t, signal) {
         const which = args.find((a) => !a.startsWith('-'))?.toLowerCase() ?? 'arcade';
         if (!BOARDS[which]) return t.print(`boards: ${Object.keys(BOARDS).join(', ')}`, 'err');
         const board = which === 'daily' ? `daily:${app.dailyKey()}` : which;
-        const localOnly = args.includes('--local') || args.includes('-l');
+        const localOnly = args.includes('--local') || args.includes('-l') || !globalBoard(board);
         const rows = (list: { name: string; score: number; level: number; cls: SnakeClass; id?: string }[]) => {
           if (!list.length) return t.print('  (no scores yet)', 'dim');
           const cells = list.map((r, i) => [
@@ -339,6 +339,7 @@ export function buildCommands(app: AppCtx): Command[] {
           ['arcade', (d.best.arcade ?? 0).toLocaleString()],
           ['rhythm', (d.best.rhythm ?? 0).toLocaleString()],
           ['zen', (d.best.zen ?? 0).toLocaleString()],
+          ['endless', (d.best.endless ?? 0).toLocaleString()],
           [`daily ${app.dailyKey()}`, (d.daily[app.dailyKey()] ?? 0).toLocaleString() + (d.ghosts[app.dailyKey()] ? '  (ghost saved)' : '')],
           ['trophies', `${d.achievements.length}/${ACHIEVEMENTS.length}`],
         ]);
@@ -473,7 +474,7 @@ export function buildCommands(app: AppCtx): Command[] {
       aliases: ['dir'],
       hidden: true,
       desc: 'list files',
-      run: (_a, t) => t.print('arcade.exe  classic.exe  daily.exe  zen.exe  rhythm.exe  versus.exe  editor.exe  readme.txt  scores.db'),
+      run: (_a, t) => t.print('arcade.exe  classic.exe  daily.exe  zen.exe  rhythm.exe  endless.exe  versus.exe  editor.exe  readme.txt  scores.db'),
     },
     {
       name: 'cat',

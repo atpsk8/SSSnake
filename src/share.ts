@@ -11,7 +11,7 @@ export interface Challenge {
   level?: LevelData;
 }
 
-const RUN_MODES: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm'];
+const RUN_MODES: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'endless'];
 
 function toB64Url(s: string): string {
   const bytes = new TextEncoder().encode(s);

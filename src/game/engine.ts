@@ -5,6 +5,7 @@ import { arcadeLevel, levelFromData, simpleLevel, type LevelData, type LevelSpec
 import { MODES, type ModeConfig } from './modes';
 import { MUTATIONS, MUTATION_LIST } from './mutations';
 import { Rng } from './rng';
+import { biomeAt, generateWorld, type Biome, type BiomeId, type Treasure, type World } from './world';
 import {
   DIRS,
   DIR_LIST,
@@ -14,10 +15,7 @@ import {
   add,
   chebyshev,
   eq,
-  idx,
-  inBounds,
   manhattan,
-  wrapPos,
   type Arrow,
   type BossKind,
   type DeathCause,
@@ -67,6 +65,10 @@ const METER_REGEN_PER_MS = 1 / 30000;
 const METER_PER_FOOD = 0.25;
 const SNAPSHOT_EVERY_MS = 400;
 const REWIND_BACK_MS = 2500;
+/** Endless: food kept on the board, how far it may be from your head, and the spawn radius. */
+const ENDLESS_FOOD = 5;
+const FOOD_LEASH = 24;
+const SPAWN_RADIUS = 11;
 
 export interface Player {
   id: number;
@@ -221,6 +223,13 @@ export class Game {
   readonly seed: number;
   readonly custom: LevelData | null;
   private readonly record: boolean;
+  /** Board size for this game: 24x24 arenas, or the Endless world. */
+  readonly w: number;
+  readonly h: number;
+  /** Endless: the generated world (biomes and landmarks); null in arena modes. */
+  world: World | null = null;
+  /** Endless: biome under player 1's head. */
+  biome: BiomeId | null = null;
 
   status: 'playing' | 'draft' | 'over' = 'playing';
   won = false;
@@ -241,7 +250,7 @@ export class Game {
   private startArena = 0;
   modifiers = new Set<ModifierId>();
   /** Static solid cells: arena walls, maze walls and the collapsed border. */
-  solid: Uint8Array = new Uint8Array(W * H);
+  solid: Uint8Array;
   /** Walls destroyed by Cobra spit (cell indexes). */
   broken = new Set<number>();
   mazeIndex = 0;
@@ -263,7 +272,7 @@ export class Game {
   boss: Boss | null = null;
   wells: Vec[] = [];
   arrows: Arrow[] = [];
-  enclosed: Uint8Array = new Uint8Array(W * H);
+  enclosed: Uint8Array;
 
   mutations: MutationId[] = [];
   draftOptions: MutationId[] | null = null;
@@ -293,6 +302,10 @@ export class Game {
 
   constructor(opts: GameOptions) {
     this.mode = MODES[opts.mode];
+    this.w = this.mode.world || W;
+    this.h = this.mode.world || H;
+    this.solid = new Uint8Array(this.w * this.h);
+    this.enclosed = new Uint8Array(this.w * this.h);
     this.seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
     this.rng = new Rng(this.seed);
     this.custom = opts.level ?? null;
@@ -369,6 +382,28 @@ export class Game {
     return this.mutations.includes(m);
   }
 
+  inb(p: Vec): boolean {
+    return p.x >= 0 && p.y >= 0 && p.x < this.w && p.y < this.h;
+  }
+
+  wrapAt(p: Vec): Vec {
+    return { x: (p.x + this.w) % this.w, y: (p.y + this.h) % this.h };
+  }
+
+  ix(p: Vec): number {
+    return p.y * this.w + p.x;
+  }
+
+  /** Endless: the biome at a cell. */
+  biomeAt(p: Vec): Biome | null {
+    return this.world ? biomeAt(this.world, p) : null;
+  }
+
+  /** Does food at this cell ripen? Per biome in Endless, per level elsewhere. */
+  ripensAt(p: Vec): boolean {
+    return this.world ? biomeAt(this.world, p).modifiers.includes('ripening') : this.modifiers.has('ripening');
+  }
+
   get wraps(): boolean {
     return this.arena.wrap;
   }
@@ -431,6 +466,7 @@ export class Game {
     else if (this.mode.zen) b = 125;
     else if (id === 'versus') b = 120;
     else if (id === 'custom') b = Math.max(70, 125 - this.levelFoods);
+    else if (this.world) b = Math.max(70, 125 - this.p0.foods * 1.2);
     else if (this.spec.boss) b = Math.max(85, 120 - this.spec.bossTier * 5);
     else b = Math.max(55, 130 - (this.level - 1) * 7 - this.levelFoods * 1.5);
     if (this.players.some((p) => p.alive && p.effects.slowmo)) b *= 1.8;
@@ -571,6 +607,7 @@ export class Game {
         cells.push({ ...p.body[0] });
       }
       if (cells.length) this.events.push({ type: 'dash', cells: [from, ...cells] });
+      if (this.world && p.id === 0) this.syncBiome();
     } else if (p.cls === 'cobra') {
       const h = p.body[0];
       this.projectiles.push({ pos: { ...h }, prev: { ...h }, dir: p.dir, owner: p.id, life: 8 });
@@ -692,7 +729,7 @@ export class Game {
     for (const pk of this.pickups) {
       pk.ttl -= dt;
       pk.age += dt;
-      if (ripening && pk.kind === 'food' && pk.age > RIPEN_MS) {
+      if ((this.world ? this.ripensAt(pk.pos) : ripening) && pk.kind === 'food' && pk.age > RIPEN_MS) {
         pk.kind = 'rot';
         pk.ttl = ROT_TTL_MS;
         pk.maxTtl = ROT_TTL_MS;
@@ -713,7 +750,8 @@ export class Game {
       this.powerTimer -= dt;
       if (this.powerTimer <= 0) {
         this.powerTimer = this.rng.range(8000, 13000) * (this.has('lucky') ? 0.6 : 1);
-        const onBoard = this.pickups.some((p) => !['food', 'bit', 'rot'].includes(p.kind));
+        // Endless treasure never expires and doesn't count as a power-up on the board.
+        const onBoard = this.pickups.some((p) => !['food', 'bit', 'rot'].includes(p.kind) && Number.isFinite(p.maxTtl));
         if (!onBoard) {
           const weights: [PowerKind, number][] = [
             ['phase', 2],
@@ -732,8 +770,13 @@ export class Game {
     if (this.spec.mice) {
       this.mouseTimer -= dt;
       if (this.mouseTimer <= 0) {
-        this.mouseTimer = this.rng.range(12000, 18000);
-        if (this.mice.length < 1 + Math.floor(this.level / 3)) this.spawnMouse(false);
+        if (this.world) {
+          this.mouseTimer = this.rng.range(5000, 9000);
+          if (this.mice.length < (this.biomeAt(this.p0.body[0])?.mice ?? 1)) this.spawnMouse(false);
+        } else {
+          this.mouseTimer = this.rng.range(12000, 18000);
+          if (this.mice.length < 1 + Math.floor(this.level / 3)) this.spawnMouse(false);
+        }
       }
     }
     if (this.spec.rival && !this.rival) {
@@ -809,6 +852,7 @@ export class Game {
       if (apply && apply !== OPPOSITE[p.dir]) p.dir = apply;
     } else if (next) p.dir = next;
     this.advance(p, false);
+    if (this.world && p.id === 0) this.syncBiome();
     if (this.record && p.id === 0 && p.alive) {
       const h = p.body[0];
       this.trail.push(Math.round(this.time), h.x, h.y, p.body.length);
@@ -818,8 +862,8 @@ export class Game {
   /** Move a player one cell. Returns false if it died, was stopped, or the level changed. */
   private advance(p: Player, dashing: boolean): boolean {
     let head = add(p.body[0], DIRS[p.dir]);
-    if (!inBounds(head)) {
-      if (this.wraps) head = wrapPos(head);
+    if (!this.inb(head)) {
+      if (this.wraps) head = this.wrapAt(head);
       else return this.hurt(p, 'wall', p.body[0]);
     }
     const exit = this.portalExit(head);
@@ -828,7 +872,7 @@ export class Game {
       head = { ...exit };
     }
 
-    if (this.solid[idx(head)]) return this.hurt(p, 'wall', head);
+    if (this.solid[this.ix(head)]) return this.hurt(p, 'wall', head);
     if (this.bossAt(head)) return this.hurt(p, 'boss', head);
 
     const si = this.shedWalls.findIndex((w) => eq(w.pos, head));
@@ -902,9 +946,9 @@ export class Game {
         for (let dx = -1; dx <= 1; dx++) {
           if (!dx && !dy) continue;
           let c = { x: head.x + dx, y: head.y + dy };
-          if (!inBounds(c)) {
+          if (!this.inb(c)) {
             if (!this.wraps) continue;
-            c = wrapPos(c);
+            c = this.wrapAt(c);
           }
           this.eatAt(p, c, 1);
           if (this.level !== level || this.status !== 'playing') return false;
@@ -957,8 +1001,8 @@ export class Game {
   }
 
   private deadlyFor(p: Player, c: Vec): boolean {
-    if (!inBounds(c)) return !this.wraps;
-    if (this.solid[idx(c)] || this.bossAt(c)) return true;
+    if (!this.inb(c)) return !this.wraps;
+    if (this.solid[this.ix(c)] || this.bossAt(c)) return true;
     if (this.shedWalls.some((w) => eq(w.pos, c))) return true;
     if (this.mines.some((m) => eq(m.pos, c) && this.mineLit(m))) return true;
     if (this.rival?.body.some((s) => eq(s, c))) return true;
@@ -974,7 +1018,7 @@ export class Game {
     const order = [p.dir, ...DIR_LIST.filter((d) => d !== p.dir && d !== OPPOSITE[p.dir])];
     for (const d of order) {
       let c = add(p.body[0], DIRS[d]);
-      if (!inBounds(c) && this.wraps) c = wrapPos(c);
+      if (!this.inb(c) && this.wraps) c = this.wrapAt(c);
       if (!this.deadlyFor(p, c)) return d;
     }
     return null;
@@ -1008,6 +1052,7 @@ export class Game {
       while (n >= 4 && this.trail[n - 4] > this.time) n -= 4;
       this.trail.length = n;
     }
+    this.syncBiome();
     this.banner = { title: 'Rewind', subtitle: `${this.rewinds} left`, ttl: 900 };
     this.events.push({ type: 'rewind' });
   }
@@ -1057,7 +1102,7 @@ export class Game {
       p.lastEatTime = this.time;
       let base = kind === 'golden' ? 50 : kind === 'bit' ? 5 : 10;
       if (kind === 'food' && this.has('glutton')) base *= 1.5;
-      if (kind === 'food' && this.modifiers.has('ripening')) base *= 1 + Math.min(pk.age / 8000, 2);
+      if (kind === 'food' && this.ripensAt(pk.pos)) base *= 1 + Math.min(pk.age / 8000, 2);
       const mult =
         (this.mode.abilities ? p.combo : 1) *
         this.lengthMultP(p) *
@@ -1152,13 +1197,13 @@ export class Game {
 
   private checkCoil(p: Player) {
     if (!this.mode.abilities || !p.alive) return;
-    const barrier = new Uint8Array(W * H);
-    for (const s of p.body) barrier[idx(s)] = 1;
-    for (const w of this.shedWalls) if (w.owner === p.id) barrier[idx(w.pos)] = 1;
-    const enc = findEnclosed(barrier);
+    const barrier = new Uint8Array(this.w * this.h);
+    for (const s of p.body) barrier[this.ix(s)] = 1;
+    for (const w of this.shedWalls) if (w.owner === p.id) barrier[this.ix(w.pos)] = 1;
+    const enc = findEnclosed(barrier, this.w, this.h);
     this.enclosed = enc;
 
-    const inside = (c: Vec) => enc[idx(c)] === 1;
+    const inside = (c: Vec) => enc[this.ix(c)] === 1;
     const mult = (this.has('constrictor') ? 3 : 2) + (p.cls === 'python' ? 1 : 0);
     let captured = 0;
     let points = 0;
@@ -1209,7 +1254,7 @@ export class Game {
     this.coils++;
     this.bestCoil = Math.max(this.bestCoil, captured);
     const cells: Vec[] = [];
-    for (let i = 0; i < enc.length; i++) if (enc[i]) cells.push({ x: i % W, y: Math.floor(i / W) });
+    for (let i = 0; i < enc.length; i++) if (enc[i]) cells.push({ x: i % this.w, y: Math.floor(i / this.w) });
     this.events.push({ type: 'coil', cells, captured, points, player: p.id });
   }
 
@@ -1234,6 +1279,7 @@ export class Game {
       if (p.effects.magnet) this.pull(p.body[0], 6, 1);
       else if (this.has('scales') && p.id === 0) this.pull(p.body[0], 3, 1);
     }
+    if (this.world) this.tendFood();
     if (this.wells.length) {
       this.wellSkip = !this.wellSkip;
       if (!this.wellSkip) {
@@ -1275,12 +1321,12 @@ export class Game {
       let alive = true;
       for (let s = 0; s < 2 && alive; s++) {
         let n = add(pr.pos, DIRS[pr.dir]);
-        if (!inBounds(n)) {
+        if (!this.inb(n)) {
           if (!this.wraps) {
             alive = false;
             break;
           }
-          n = wrapPos(n);
+          n = this.wrapAt(n);
         }
         pr.pos = n;
         alive = !this.projectileHit(pr);
@@ -1299,10 +1345,10 @@ export class Game {
       this.events.push({ type: 'spitHit', pos: { ...c } });
       return true;
     };
-    if (this.solid[idx(c)]) {
-      const isRing = c.x < this.ring || c.y < this.ring || c.x >= W - this.ring || c.y >= H - this.ring;
+    if (this.solid[this.ix(c)]) {
+      const isRing = c.x < this.ring || c.y < this.ring || c.x >= this.w - this.ring || c.y >= this.h - this.ring;
       if (!isRing) {
-        this.broken.add(idx(c));
+        this.broken.add(this.ix(c));
         this.rebuildSolid();
       }
       return hit();
@@ -1364,15 +1410,21 @@ export class Game {
   loadLevel(level: number, showBanner: boolean) {
     this.level = level;
     this.levelFoods = 0;
-    const spec = this.custom
-      ? levelFromData(this.custom)
-      : this.mode.levels
-        ? arcadeLevel(level, this.startArena, this.rng, {
-            hazards: this.mode.hazards,
-            bosses: this.mode.bosses,
-            twists: this.mode.twists,
-          })
-        : simpleLevel(this.mode.arena === 'custom' ? 'box' : this.mode.arena, this.mode.powerUps);
+    let treasure: Treasure[] = [];
+    let spec: LevelSpec;
+    if (this.mode.world) {
+      const gen = generateWorld(this.seed, this.w);
+      this.world = gen.world;
+      treasure = gen.treasure;
+      spec = gen.spec;
+    } else if (this.custom) spec = levelFromData(this.custom);
+    else if (this.mode.levels) {
+      spec = arcadeLevel(level, this.startArena, this.rng, {
+        hazards: this.mode.hazards,
+        bosses: this.mode.bosses,
+        twists: this.mode.twists,
+      });
+    } else spec = simpleLevel(this.mode.arena === 'custom' || this.mode.arena === 'world' ? 'box' : this.mode.arena, this.mode.powerUps);
     this.spec = spec;
     this.arena = spec.arena;
     this.modifiers = new Set(spec.modifiers);
@@ -1420,7 +1472,7 @@ export class Game {
     this.boss = null;
     this.snapshots = [];
     this.snapTimer = 0;
-    this.enclosed = new Uint8Array(W * H);
+    this.enclosed = new Uint8Array(this.w * this.h);
 
     for (let i = 0; i < spec.randomMines; i++) {
       const pos = this.freeCell(6);
@@ -1442,6 +1494,12 @@ export class Game {
     if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
 
     this.spawnPickup('food', Infinity);
+    if (this.world) {
+      for (const t of treasure) this.spawnPickup(t.kind, Infinity, { ...t.pos });
+      for (let i = 1; i < ENDLESS_FOOD; i++) this.spawnPickup('food', Infinity);
+      this.biome = null;
+      this.syncBiome();
+    }
     this.powerTimer = this.rng.range(5000, 8000);
     this.mouseTimer = this.rng.range(7000, 11000);
 
@@ -1461,7 +1519,7 @@ export class Game {
     const cells = [{ ...head }];
     let back = OPPOSITE[dir];
     let cur = head;
-    const free = (c: Vec) => inBounds(c) && !this.solid[idx(c)] && !cells.some((s) => eq(s, c));
+    const free = (c: Vec) => this.inb(c) && !this.solid[this.ix(c)] && !cells.some((s) => eq(s, c));
     for (let i = 1; i < len; i++) {
       const options = [back, ...DIR_LIST.filter((d) => d !== back && d !== dir)];
       const d = options.find((o) => free(add(cur, DIRS[o])));
@@ -1476,14 +1534,14 @@ export class Game {
 
   rebuildSolid() {
     this.solid.fill(0);
-    for (const w of this.arena.walls) this.solid[idx(w)] = 1;
-    for (const w of this.mazeWalls) this.solid[idx(w)] = 1;
+    for (const w of this.arena.walls) this.solid[this.ix(w)] = 1;
+    for (const w of this.mazeWalls) this.solid[this.ix(w)] = 1;
     for (const b of this.broken) this.solid[b] = 0;
     const r = this.ring;
     if (r > 0) {
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          if (x < r || y < r || x >= W - r || y >= H - r) this.solid[y * W + x] = 1;
+      for (let y = 0; y < this.h; y++) {
+        for (let x = 0; x < this.w; x++) {
+          if (x < r || y < r || x >= this.w - r || y >= this.h - r) this.solid[y * this.w + x] = 1;
         }
       }
     }
@@ -1491,7 +1549,7 @@ export class Game {
 
   /** Move or drop anything now sitting inside a solid cell. */
   private evictFromSolid() {
-    const inSolid = (p: Vec) => this.solid[idx(p)] === 1;
+    const inSolid = (p: Vec) => this.solid[this.ix(p)] === 1;
     const lost = this.pickups.filter((p) => inSolid(p.pos));
     this.pickups = this.pickups.filter((p) => !inSolid(p.pos));
     for (const p of lost) if (p.kind === 'food') this.spawnPickup('food', Infinity);
@@ -1538,50 +1596,94 @@ export class Game {
 
   /** Cell free of everything; optionally at least `minDist` from every snake head. */
   freeCell(minDist = 3, near?: { at: Vec; radius: number }): Vec | null {
-    const heads = this.players.filter((p) => p.alive && p.body.length).map((p) => p.body[0]);
-    const ok = (p: Vec) => {
-      if (this.solid[idx(p)] || this.enclosed[idx(p)]) return false;
-      if (near && chebyshev(p, near.at) > near.radius) return false;
-      if (heads.some((h) => manhattan(p, h) < minDist)) return false;
-      if (this.collapseWarning && this.inNextRing(p)) return false;
-      if (this.pendingMaze?.some((w) => eq(w, p))) return false;
-      if (this.portalExit(p)) return false;
-      if (this.bossAt(p)) return false;
-      if (this.players.some((pl) => pl.body.some((s) => eq(s, p)))) return false;
-      if (this.pickups.some((s) => eq(s.pos, p))) return false;
-      if (this.shedWalls.some((s) => eq(s.pos, p))) return false;
-      if (this.mines.some((s) => eq(s.pos, p))) return false;
-      if (this.mice.some((s) => eq(s.pos, p))) return false;
-      if (this.wells.some((s) => eq(s, p))) return false;
-      if (this.arrows.some((s) => eq(s.pos, p))) return false;
-      if (this.rival?.body.some((s) => eq(s, p))) return false;
-      if (this.inSpawnLane(p)) return false;
-      return true;
-    };
+    const heads = this.liveHeads();
+    const ok = (p: Vec) => (!near || chebyshev(p, near.at) <= near.radius) && this.spawnable(p, minDist, heads);
     for (let i = 0; i < 200; i++) {
-      const p = { x: this.rng.int(W), y: this.rng.int(H) };
+      const p = { x: this.rng.int(this.w), y: this.rng.int(this.h) };
       if (ok(p)) return p;
     }
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) if (ok({ x, y })) return { x, y };
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w; x++) if (ok({ x, y })) return { x, y };
     }
     if (near) return this.freeCell(minDist);
     return minDist > 0 ? this.freeCell(0) : null;
   }
 
+  private liveHeads(): Vec[] {
+    return this.players.filter((p) => p.alive && p.body.length).map((p) => p.body[0]);
+  }
+
+  /** Free of everything and at least `minDist` (Manhattan) from every head. */
+  private spawnable(p: Vec, minDist: number, heads: Vec[]): boolean {
+    if (this.solid[this.ix(p)] || this.enclosed[this.ix(p)]) return false;
+    if (heads.some((h) => manhattan(p, h) < minDist)) return false;
+    if (this.collapseWarning && this.inNextRing(p)) return false;
+    if (this.pendingMaze?.some((w) => eq(w, p))) return false;
+    if (this.portalExit(p)) return false;
+    if (this.bossAt(p)) return false;
+    if (this.players.some((pl) => pl.body.some((s) => eq(s, p)))) return false;
+    if (this.pickups.some((s) => eq(s.pos, p))) return false;
+    if (this.shedWalls.some((s) => eq(s.pos, p))) return false;
+    if (this.mines.some((s) => eq(s.pos, p))) return false;
+    if (this.mice.some((s) => eq(s.pos, p))) return false;
+    if (this.wells.some((s) => eq(s, p))) return false;
+    if (this.arrows.some((s) => eq(s.pos, p))) return false;
+    if (this.rival?.body.some((s) => eq(s, p))) return false;
+    if (this.inSpawnLane(p)) return false;
+    return true;
+  }
+
+  /** Where new things appear: anywhere on an arena, near player 1 in the Endless world. */
+  private spawnCell(minDist: number): Vec | null {
+    if (!this.world) return this.freeCell(minDist);
+    const at = this.p0.body[0];
+    const heads = this.liveHeads();
+    const span = SPAWN_RADIUS * 2 + 1;
+    for (let i = 0; i < 120; i++) {
+      const p = { x: at.x - SPAWN_RADIUS + this.rng.int(span), y: at.y - SPAWN_RADIUS + this.rng.int(span) };
+      if (this.inb(p) && this.spawnable(p, minDist, heads)) return p;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- endless world
+
+  /** Twists follow the biome under player 1's head. */
+  private syncBiome() {
+    const head = this.p0.body[0];
+    if (!this.world || !head) return;
+    const b = biomeAt(this.world, head);
+    if (b.id === this.biome) return;
+    this.biome = b.id;
+    this.modifiers = new Set(b.modifiers);
+  }
+
+  /** Keep a few foods near the head: far ones move closer, missing ones are topped up. */
+  private tendFood() {
+    const head = this.p0.body[0];
+    if (!head) return;
+    let foods = 0;
+    for (const pk of [...this.pickups]) {
+      if (pk.kind !== 'food') continue;
+      if (chebyshev(pk.pos, head) > FOOD_LEASH) this.pickups.splice(this.pickups.indexOf(pk), 1);
+      else foods++;
+    }
+    if (foods < ENDLESS_FOOD) this.spawnPickup('food', Infinity);
+  }
+
   private inNextRing(p: Vec): boolean {
     const r = this.ring + 1;
-    return p.x < r || p.y < r || p.x >= W - r || p.y >= H - r;
+    return p.x < r || p.y < r || p.x >= this.w - r || p.y >= this.h - r;
   }
 
   spawnPickup(kind: PickupKind, ttl: number, at?: Vec) {
-    const pos = at ?? this.freeCell(3);
+    const pos = at ?? this.spawnCell(3);
     if (!pos) return;
     this.pickups.push({ id: this.nextId++, kind, pos, ttl, maxTtl: ttl, age: 0 });
   }
 
   private spawnMouse(drone: boolean, near?: { at: Vec; radius: number }) {
-    const pos = this.freeCell(drone ? 3 : 6, near);
+    const pos = this.world && !near ? this.spawnCell(6) : this.freeCell(drone ? 3 : 6, near);
     if (pos) {
       this.mice.push({
         id: this.nextId++,
@@ -1597,8 +1699,8 @@ export class Game {
   // ---------------------------------------------------------------- critters
 
   private blockedForCritter(p: Vec, self?: Vec[], ignoreShed = false): boolean {
-    if (!inBounds(p)) return true;
-    if (this.solid[idx(p)]) return true;
+    if (!this.inb(p)) return true;
+    if (this.solid[this.ix(p)]) return true;
     if (this.portalExit(p)) return true;
     if (this.bossAt(p)) return true;
     if (!ignoreShed && this.shedWalls.some((w) => eq(w.pos, p))) return true;
@@ -1613,7 +1715,7 @@ export class Game {
 
   private neighbour(p: Vec, d: Dir): Vec {
     const n = add(p, DIRS[d]);
-    return this.wraps ? wrapPos(n) : n;
+    return this.wraps ? this.wrapAt(n) : n;
   }
 
   private stepMice() {
@@ -1642,7 +1744,7 @@ export class Game {
   private spawnRival() {
     const head = this.p0.body[0];
     for (let tries = 0; tries < 80; tries++) {
-      const start = { x: this.rng.int(W), y: this.rng.int(H) };
+      const start = { x: this.rng.int(this.w), y: this.rng.int(this.h) };
       const dir = this.rng.pick(DIR_LIST);
       const back = DIRS[OPPOSITE[dir]];
       const body: Vec[] = [];
@@ -1661,26 +1763,26 @@ export class Game {
   private pathStep(head: Vec, dir: Dir, body: Vec[], targets: Set<number>, ignoreShed: boolean, avoid?: (c: Vec) => boolean): Dir | null {
     const blocked = (c: Vec) => this.blockedForCritter(c, body, ignoreShed) || (avoid?.(c) ?? false);
     const dirs = DIR_LIST.filter((d) => d !== OPPOSITE[dir]);
-    const safe = dirs.filter((d) => !blocked(this.neighbour(head, d)) || targets.has(idx(this.neighbour(head, d))));
+    const safe = dirs.filter((d) => !blocked(this.neighbour(head, d)) || targets.has(this.ix(this.neighbour(head, d))));
     if (!safe.length) return null;
     if (targets.size) {
-      const seen = new Uint8Array(W * H);
-      seen[idx(head)] = 1;
+      const seen = new Uint8Array(this.w * this.h);
+      seen[this.ix(head)] = 1;
       const queue: { p: Vec; first: Dir }[] = [];
       for (const d of safe) {
         const n = this.neighbour(head, d);
-        if (!inBounds(n) || seen[idx(n)]) continue;
-        seen[idx(n)] = 1;
+        if (!this.inb(n) || seen[this.ix(n)]) continue;
+        seen[this.ix(n)] = 1;
         queue.push({ p: n, first: d });
       }
       for (let qi = 0; qi < queue.length; qi++) {
         const { p, first } = queue[qi];
-        if (targets.has(idx(p))) return first;
+        if (targets.has(this.ix(p))) return first;
         for (const d of DIR_LIST) {
           const n = this.neighbour(p, d);
-          if (!inBounds(n) || seen[idx(n)]) continue;
-          if (blocked(n) && !targets.has(idx(n))) continue;
-          seen[idx(n)] = 1;
+          if (!this.inb(n) || seen[this.ix(n)]) continue;
+          if (blocked(n) && !targets.has(this.ix(n))) continue;
+          seen[this.ix(n)] = 1;
           queue.push({ p: n, first });
         }
       }
@@ -1692,7 +1794,7 @@ export class Game {
     const r = this.rival!;
     const venom = this.has('venom');
     const targets = new Set(
-      this.pickups.filter((p) => p.kind === 'food' || p.kind === 'bit').map((p) => idx(p.pos)),
+      this.pickups.filter((p) => p.kind === 'food' || p.kind === 'bit').map((p) => this.ix(p.pos)),
     );
     const d = this.rng.next() < 0.12 ? null : this.pathStep(r.body[0], r.dir, r.body, targets, venom);
     const dir =
@@ -1764,8 +1866,8 @@ export class Game {
     for (let i = 1; i < cells.length; i += 2) {
       const p = cells[i];
       if (
-        inBounds(p) &&
-        !this.solid[idx(p)] &&
+        this.inb(p) &&
+        !this.solid[this.ix(p)] &&
         !this.pickups.some((q) => eq(q.pos, p)) &&
         !this.players.some((pl) => pl.body.some((s) => eq(s, p)))
       ) {
@@ -1857,8 +1959,8 @@ export class Game {
     if (!target) return;
     const th = target.body[0];
     const ahead = add(th, DIRS[target.dir]);
-    const targets = new Set([idx(th)]);
-    if (inBounds(ahead)) targets.add(idx(ahead));
+    const targets = new Set([this.ix(th)]);
+    if (this.inb(ahead)) targets.add(this.ix(ahead));
     // The serpent ignores shed walls; that's how you trick it.
     const saved = this.boss;
     this.boss = null; // don't treat its own cells as blocking via bossAt

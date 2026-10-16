@@ -153,6 +153,8 @@ var CLASSES$1 = {
 		unlock: "Capture 3 or more things in one coil"
 	}
 };
+//#endregion
+//#region src/game/types.ts
 var DIRS = {
 	up: {
 		x: 0,
@@ -188,12 +190,6 @@ var add = (a, b) => ({
 	x: a.x + b.x,
 	y: a.y + b.y
 });
-var inBounds = (p) => p.x >= 0 && p.y >= 0 && p.x < 24 && p.y < 24;
-var wrapPos = (p) => ({
-	x: (p.x + 24) % 24,
-	y: (p.y + 24) % 24
-});
-var idx = (p) => p.y * 24 + p.x;
 var manhattan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 var chebyshev = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 //#endregion
@@ -202,8 +198,8 @@ var chebyshev = (a, b) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 * Cells sealed off from the board edge by `barrier` cells (4-connected flood fill from the
 * border). Returns a mask: 1 = enclosed, 0 = outside or barrier.
 */
-function findEnclosed(barrier) {
-	const seen = /* @__PURE__ */ new Uint8Array(576);
+function findEnclosed(barrier, W = 24, H = 24) {
+	const seen = new Uint8Array(W * H);
 	const stack = [];
 	const push = (i) => {
 		if (!seen[i] && !barrier[i]) {
@@ -211,25 +207,25 @@ function findEnclosed(barrier) {
 			stack.push(i);
 		}
 	};
-	for (let x = 0; x < 24; x++) {
+	for (let x = 0; x < W; x++) {
 		push(x);
-		push(552 + x);
+		push((H - 1) * W + x);
 	}
-	for (let y = 0; y < 24; y++) {
-		push(y * 24);
-		push(y * 24 + 24 - 1);
+	for (let y = 0; y < H; y++) {
+		push(y * W);
+		push(y * W + W - 1);
 	}
 	while (stack.length) {
 		const i = stack.pop();
-		const x = i % 24;
-		const y = (i - x) / 24;
+		const x = i % W;
+		const y = (i - x) / W;
 		if (x > 0) push(i - 1);
-		if (x < 23) push(i + 1);
-		if (y > 0) push(i - 24);
-		if (y < 23) push(i + 24);
+		if (x < W - 1) push(i + 1);
+		if (y > 0) push(i - W);
+		if (y < H - 1) push(i + W);
 	}
-	const out = /* @__PURE__ */ new Uint8Array(576);
-	for (let i = 0; i < 576; i++) out[i] = !seen[i] && !barrier[i] ? 1 : 0;
+	const out = new Uint8Array(W * H);
+	for (let i = 0; i < W * H; i++) out[i] = !seen[i] && !barrier[i] ? 1 : 0;
 	return out;
 }
 //#endregion
@@ -402,6 +398,526 @@ function sanitizeLevel(raw) {
 	};
 }
 //#endregion
+//#region src/game/rng.ts
+/** Small seeded PRNG (mulberry32) so Daily Challenge runs are reproducible. */
+var Rng = class {
+	state_;
+	constructor(seed) {
+		this.state_ = seed >>> 0;
+	}
+	/** Raw state, so rewind snapshots can restore the exact random sequence. */
+	get state() {
+		return this.state_;
+	}
+	set state(v) {
+		this.state_ = v >>> 0;
+	}
+	next() {
+		this.state_ = this.state_ + 1831565813 >>> 0;
+		let t = this.state_;
+		t = Math.imul(t ^ t >>> 15, t | 1);
+		t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+		return ((t ^ t >>> 14) >>> 0) / 4294967296;
+	}
+	int(maxExclusive) {
+		return Math.floor(this.next() * maxExclusive);
+	}
+	range(min, max) {
+		return min + this.next() * (max - min);
+	}
+	pick(items) {
+		return items[this.int(items.length)];
+	}
+	weighted(items) {
+		const total = items.reduce((s, [, w]) => s + w, 0);
+		let r = this.next() * total;
+		for (const [item, w] of items) {
+			r -= w;
+			if (r < 0) return item;
+		}
+		return items[items.length - 1][0];
+	}
+};
+function hashString(s) {
+	let h = 2166136261;
+	for (let i = 0; i < s.length; i++) {
+		h ^= s.charCodeAt(i);
+		h = Math.imul(h, 16777619);
+	}
+	return h >>> 0;
+}
+var dailySeed = (dateKey) => hashString(`sssnake:${dateKey}`);
+/** Chunks per side of a biome region cell (the Voronoi grid). */
+var REGION = 3;
+var LANDMARK_CHANCE = .3;
+/** Order matters: a chunk's biome is stored as its index in this list. */
+var BIOMES = [
+	{
+		id: "meadow",
+		name: "Meadow",
+		blurb: "Open grass and plenty of mice.",
+		modifiers: [],
+		clusters: [2, 4],
+		shape: "blob",
+		mines: [0, 1],
+		wells: 0,
+		arrows: 0,
+		mice: 3
+	},
+	{
+		id: "glacier",
+		name: "Glacier",
+		blurb: "Ice pillars. Turns kick in late.",
+		modifiers: ["ice"],
+		clusters: [3, 5],
+		shape: "pillar",
+		mines: [0, 2],
+		wells: 0,
+		arrows: 0,
+		mice: 1
+	},
+	{
+		id: "shadow",
+		name: "Shadowlands",
+		blurb: "Dark, and mined.",
+		modifiers: ["dark"],
+		clusters: [2, 4],
+		shape: "blob",
+		mines: [2, 4],
+		wells: 0,
+		arrows: 0,
+		mice: 1
+	},
+	{
+		id: "orchard",
+		name: "Orchard",
+		blurb: "Hedgerows. Food ripens, then rots.",
+		modifiers: ["ripening"],
+		clusters: [3, 5],
+		shape: "hedge",
+		mines: [0, 1],
+		wells: 0,
+		arrows: 0,
+		mice: 3
+	},
+	{
+		id: "vortex",
+		name: "Vortex",
+		blurb: "Gravity wells drag food around.",
+		modifiers: ["wells"],
+		clusters: [2, 3],
+		shape: "blob",
+		mines: [1, 2],
+		wells: 2,
+		arrows: 0,
+		mice: 2
+	},
+	{
+		id: "circuit",
+		name: "Circuit",
+		blurb: "Traces and arrow tiles.",
+		modifiers: ["arrows"],
+		clusters: [3, 5],
+		shape: "trace",
+		mines: [1, 2],
+		wells: 0,
+		arrows: 5,
+		mice: 2
+	},
+	{
+		id: "badlands",
+		name: "Badlands",
+		blurb: "Rubble and minefields.",
+		modifiers: [],
+		clusters: [3, 6],
+		shape: "rubble",
+		mines: [4, 7],
+		wells: 0,
+		arrows: 0,
+		mice: 1
+	}
+];
+var BIOME_INDEX = new Map(BIOMES.map((b, i) => [b.id, i]));
+/** 32-bit integer hash of a few numbers (murmur3 finaliser per step). */
+function hash(...ns) {
+	let h = 2166136261;
+	for (const n of ns) {
+		h = Math.imul(h ^ (n | 0), 16777619);
+		h ^= h >>> 15;
+		h = Math.imul(h, 739982445);
+		h ^= h >>> 12;
+		h = Math.imul(h, 695872825);
+		h ^= h >>> 15;
+	}
+	return h >>> 0;
+}
+function spawnChunk(size = 128) {
+	const n = Math.floor(size / 16);
+	return {
+		cx: Math.floor(n / 2),
+		cy: Math.floor(n / 2)
+	};
+}
+function worldSpawn(size = 128) {
+	const { cx, cy } = spawnChunk(size);
+	return {
+		x: cx * 16 + 3,
+		y: cy * 16 + 8
+	};
+}
+/** Which biome a chunk belongs to: the nearest jittered region centre (Voronoi). */
+function chunkBiome(seed, cx, cy, size = 128) {
+	const s = spawnChunk(size);
+	if (cx === s.cx && cy === s.cy) return "meadow";
+	const px = (cx + .5) / REGION;
+	const py = (cy + .5) / REGION;
+	const rx = Math.floor(px);
+	const ry = Math.floor(py);
+	let best = Infinity;
+	let biome = "meadow";
+	for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+		const r = new Rng(hash(seed, rx + dx, ry + dy, 45326));
+		const x = rx + dx + .15 + r.next() * .7;
+		const y = ry + dy + .15 + r.next() * .7;
+		const d = (x - px) ** 2 + (y - py) ** 2;
+		if (d < best) {
+			best = d;
+			biome = BIOMES[r.int(BIOMES.length)].id;
+		}
+	}
+	return biome;
+}
+/** One chunk's contents, in world coordinates. Pure: depends only on its arguments. */
+function generateChunk(seed, cx, cy, size = 128) {
+	const rng = new Rng(hash(seed, cx, cy, 50343));
+	const biome = BIOMES[BIOME_INDEX.get(chunkBiome(seed, cx, cy, size))];
+	const ox = cx * 16;
+	const oy = cy * 16;
+	const out = {
+		cx,
+		cy,
+		biome: biome.id,
+		walls: [],
+		mines: [],
+		wells: [],
+		arrows: [],
+		treasure: [],
+		landmark: null
+	};
+	const used = /* @__PURE__ */ new Uint8Array(256);
+	const at = (x, y) => (y - oy) * 16 + (x - ox);
+	const inChunk = (x, y) => x >= ox && y >= oy && x < ox + 16 && y < oy + 16;
+	const open = (x, y) => inChunk(x, y) && !used[at(x, y)];
+	const reserve = (x0, y0, x1, y1) => {
+		for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (inChunk(x, y)) used[at(x, y)] = 3;
+	};
+	reserve(0, 0, size - 1, 0);
+	reserve(0, size - 1, size - 1, size - 1);
+	reserve(0, 0, 0, size - 1);
+	reserve(size - 1, 0, size - 1, size - 1);
+	const s = spawnChunk(size);
+	const isSpawn = cx === s.cx && cy === s.cy;
+	const sp = worldSpawn(size);
+	reserve(sp.x - 4, sp.y - 2, sp.x + 12, sp.y + 2);
+	const take = (x, y) => {
+		used[at(x, y)] = 1;
+	};
+	if (!isSpawn && rng.next() < LANDMARK_CHANCE) {
+		const kind = rng.weighted([
+			["shrine", .4],
+			["gate", .35],
+			["crater", .25]
+		]);
+		const c = {
+			x: ox + 5 + rng.int(6),
+			y: oy + 5 + rng.int(6)
+		};
+		if (c.x > 3 && c.y > 3 && c.x < size - 4 && c.y < size - 4) {
+			out.landmark = {
+				kind,
+				pos: c
+			};
+			if (kind === "shrine") {
+				const door = rng.pick(DIR_LIST);
+				const gap = {
+					x: c.x + DIRS[door].x * 2,
+					y: c.y + DIRS[door].y * 2
+				};
+				for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+					if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
+					const p = {
+						x: c.x + dx,
+						y: c.y + dy
+					};
+					if (p.x === gap.x && p.y === gap.y) continue;
+					out.walls.push(p);
+				}
+				out.treasure.push({
+					kind: "golden",
+					pos: { ...c }
+				});
+			} else if (kind === "gate") for (const [dx, dy] of [
+				[-2, -2],
+				[2, -2],
+				[-2, 2],
+				[2, 2]
+			]) out.walls.push({
+				x: c.x + dx,
+				y: c.y + dy
+			});
+			else {
+				for (const [dx, dy] of [
+					[-3, 0],
+					[3, 0],
+					[0, -3],
+					[0, 3],
+					[-2, -2],
+					[2, -2],
+					[-2, 2],
+					[2, 2]
+				]) out.mines.push({
+					x: c.x + dx,
+					y: c.y + dy
+				});
+				for (const d of [{
+					x: 0,
+					y: 0
+				}, ...DIR_LIST.map((k) => DIRS[k])]) out.treasure.push({
+					kind: "bit",
+					pos: {
+						x: c.x + d.x,
+						y: c.y + d.y
+					}
+				});
+			}
+			reserve(c.x - 3, c.y - 3, c.x + 3, c.y + 3);
+		}
+	}
+	const clusters = biome.clusters[0] + rng.int(biome.clusters[1] - biome.clusters[0] + 1);
+	for (let k = 0; k < clusters; k++) {
+		const start = {
+			x: ox + 1 + rng.int(14),
+			y: oy + 1 + rng.int(14)
+		};
+		const cells = shapeCells(biome.shape, start, rng).filter((p) => open(p.x, p.y));
+		const unique = cells.filter((p, i) => cells.findIndex((q) => q.x === p.x && q.y === p.y) === i);
+		if (unique.length < 2) continue;
+		for (const p of unique) {
+			take(p.x, p.y);
+			out.walls.push(p);
+		}
+		for (const p of unique) for (const d of DIR_LIST) {
+			const n = {
+				x: p.x + DIRS[d].x,
+				y: p.y + DIRS[d].y
+			};
+			if (inChunk(n.x, n.y) && !used[at(n.x, n.y)]) used[at(n.x, n.y)] = 2;
+		}
+	}
+	const itemSpot = () => {
+		for (let i = 0; i < 40; i++) {
+			const p = {
+				x: ox + rng.int(16),
+				y: oy + rng.int(16)
+			};
+			const k = at(p.x, p.y);
+			if (used[k] === 1 || used[k] === 3) continue;
+			used[k] = 3;
+			return p;
+		}
+		return null;
+	};
+	const mines = biome.mines[0] + rng.int(biome.mines[1] - biome.mines[0] + 1);
+	for (let i = 0; i < mines; i++) {
+		const p = itemSpot();
+		if (p) out.mines.push(p);
+	}
+	for (let i = 0; i < biome.wells; i++) {
+		const p = itemSpot();
+		if (p) out.wells.push(p);
+	}
+	for (let i = 0; i < biome.arrows; i++) {
+		const p = itemSpot();
+		if (p) out.arrows.push({
+			pos: p,
+			dir: rng.pick(DIR_LIST)
+		});
+	}
+	return out;
+}
+function shapeCells(shape, s, rng) {
+	const out = [{ ...s }];
+	switch (shape) {
+		case "blob": {
+			let c = s;
+			const n = 4 + rng.int(6);
+			for (let i = 0; i < n; i++) {
+				const d = DIRS[rng.pick(DIR_LIST)];
+				c = {
+					x: c.x + d.x,
+					y: c.y + d.y
+				};
+				out.push(c);
+			}
+			break;
+		}
+		case "pillar": {
+			const n = rng.next() < .3 ? 3 : 2;
+			for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (x || y) out.push({
+				x: s.x + x,
+				y: s.y + y
+			});
+			break;
+		}
+		case "hedge": {
+			const d = DIRS[rng.next() < .5 ? "right" : "down"];
+			const n = 4 + rng.int(5);
+			for (let i = 1; i < n; i++) out.push({
+				x: s.x + d.x * i,
+				y: s.y + d.y * i
+			});
+			break;
+		}
+		case "trace": {
+			let d = rng.pick(DIR_LIST);
+			let c = s;
+			const a = 3 + rng.int(3);
+			const b = 2 + rng.int(3);
+			for (let i = 1; i < a + b; i++) {
+				if (i === a) d = rng.next() < .5 ? d === "up" || d === "down" ? "left" : "up" : d === "up" || d === "down" ? "right" : "down";
+				c = {
+					x: c.x + DIRS[d].x,
+					y: c.y + DIRS[d].y
+				};
+				out.push(c);
+			}
+			break;
+		}
+		case "rubble": {
+			const n = 2 + rng.int(4);
+			for (let i = 0; i < n; i++) out.push({
+				x: s.x - 1 + rng.int(3),
+				y: s.y - 1 + rng.int(3)
+			});
+			break;
+		}
+	}
+	return out;
+}
+/** Build the whole world from its chunks, then the world-level pass. Deterministic per seed. */
+function generateWorld(seed, size = 128) {
+	const cols = Math.floor(size / 16);
+	const rows = cols;
+	const chunks = [];
+	for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) chunks.push(generateChunk(seed, cx, cy, size));
+	const n = size * size;
+	const at = (p) => p.y * size + p.x;
+	const solid = new Uint8Array(n);
+	for (let i = 0; i < size; i++) solid[i] = solid[(size - 1) * size + i] = solid[i * size] = solid[i * size + size - 1] = 1;
+	for (const c of chunks) for (const w of c.walls) solid[at(w)] = 1;
+	const gates = chunks.filter((c) => c.landmark?.kind === "gate").map((c) => c.landmark);
+	const rng = new Rng(hash(seed, 39550));
+	for (let i = gates.length - 1; i > 0; i--) {
+		const j = rng.int(i + 1);
+		[gates[i], gates[j]] = [gates[j], gates[i]];
+	}
+	const portals = [];
+	for (let i = 0; i + 1 < gates.length; i += 2) portals.push([{ ...gates[i].pos }, { ...gates[i + 1].pos }]);
+	if (gates.length % 2) {
+		const last = gates[gates.length - 1];
+		last.kind = "ruin";
+		solid[at(last.pos)] = 1;
+	}
+	const spawn = worldSpawn(size);
+	const seen = new Uint8Array(n);
+	const stack = [at(spawn)];
+	seen[at(spawn)] = 1;
+	while (stack.length) {
+		const i = stack.pop();
+		const x = i % size;
+		const y = (i - x) / size;
+		for (const [nx, ny] of [
+			[x + 1, y],
+			[x - 1, y],
+			[x, y + 1],
+			[x, y - 1]
+		]) {
+			if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+			const k = ny * size + nx;
+			if (seen[k] || solid[k]) continue;
+			seen[k] = 1;
+			stack.push(k);
+		}
+	}
+	for (let i = 0; i < n; i++) if (!seen[i]) solid[i] = 1;
+	const reachable = (p) => seen[at(p)] === 1;
+	const livePortals = portals.filter(([a, b]) => reachable(a) && reachable(b));
+	const walls = [];
+	for (let i = 0; i < n; i++) if (solid[i]) walls.push({
+		x: i % size,
+		y: Math.floor(i / size)
+	});
+	const mines = chunks.flatMap((c) => c.mines).filter(reachable);
+	const wells = chunks.flatMap((c) => c.wells).filter(reachable);
+	const arrows = chunks.flatMap((c) => c.arrows).filter((a) => {
+		if (!reachable(a.pos)) return false;
+		const d = DIRS[a.dir];
+		for (let k = 1; k <= 3; k++) {
+			const p = {
+				x: a.pos.x + d.x * k,
+				y: a.pos.y + d.y * k
+			};
+			if (solid[at(p)] || mines.some((m) => m.x === p.x && m.y === p.y)) return false;
+		}
+		return true;
+	});
+	const treasure = chunks.flatMap((c) => c.treasure).filter((t) => reachable(t.pos));
+	const landmarks = chunks.flatMap((c) => c.landmark ? [c.landmark] : []);
+	const biome = new Uint8Array(cols * rows);
+	chunks.forEach((c, i) => biome[i] = BIOME_INDEX.get(c.biome));
+	return {
+		world: {
+			w: size,
+			h: size,
+			cols,
+			rows,
+			biome,
+			landmarks
+		},
+		treasure,
+		spec: {
+			arena: {
+				id: "world",
+				name: "Endless",
+				blurb: "A big world of biomes.",
+				wrap: false,
+				walls,
+				portals: livePortals,
+				mazes: [],
+				collapse: false
+			},
+			modifiers: [],
+			wells,
+			arrows,
+			mines,
+			randomMines: 0,
+			rival: false,
+			mice: true,
+			powerUps: true,
+			boss: null,
+			bossTier: 0,
+			spawn,
+			spawnDir: "right",
+			goalFoods: 0
+		}
+	};
+}
+function biomeAt(world, p) {
+	const cx = Math.min(world.cols - 1, Math.max(0, Math.floor(p.x / 16)));
+	const cy = Math.min(world.rows - 1, Math.max(0, Math.floor(p.y / 16)));
+	return BIOMES[world.biome[cy * world.cols + cx]];
+}
+//#endregion
 //#region src/game/modes.ts
 var base = {
 	abilities: true,
@@ -416,7 +932,8 @@ var base = {
 	players: 1,
 	rhythm: false,
 	zen: false,
-	arena: "box"
+	arena: "box",
+	world: 0
 };
 var MODES$1 = {
 	classic: {
@@ -474,6 +991,16 @@ var MODES$1 = {
 		name: "Versus",
 		blurb: "Two players, one screen. Best of three.",
 		players: 2
+	},
+	endless: {
+		...base,
+		id: "endless",
+		name: "Endless",
+		blurb: "A huge world of biomes and landmarks. Explore until you crash.",
+		hazards: true,
+		rewinds: 1,
+		arena: "world",
+		world: 128
 	},
 	custom: {
 		...base,
@@ -609,56 +1136,6 @@ var defs = [
 var MUTATIONS = Object.fromEntries(defs.map((d) => [d.id, d]));
 var MUTATION_LIST = defs.map((d) => d.id);
 //#endregion
-//#region src/game/rng.ts
-/** Small seeded PRNG (mulberry32) so Daily Challenge runs are reproducible. */
-var Rng = class {
-	state_;
-	constructor(seed) {
-		this.state_ = seed >>> 0;
-	}
-	/** Raw state, so rewind snapshots can restore the exact random sequence. */
-	get state() {
-		return this.state_;
-	}
-	set state(v) {
-		this.state_ = v >>> 0;
-	}
-	next() {
-		this.state_ = this.state_ + 1831565813 >>> 0;
-		let t = this.state_;
-		t = Math.imul(t ^ t >>> 15, t | 1);
-		t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-		return ((t ^ t >>> 14) >>> 0) / 4294967296;
-	}
-	int(maxExclusive) {
-		return Math.floor(this.next() * maxExclusive);
-	}
-	range(min, max) {
-		return min + this.next() * (max - min);
-	}
-	pick(items) {
-		return items[this.int(items.length)];
-	}
-	weighted(items) {
-		const total = items.reduce((s, [, w]) => s + w, 0);
-		let r = this.next() * total;
-		for (const [item, w] of items) {
-			r -= w;
-			if (r < 0) return item;
-		}
-		return items[items.length - 1][0];
-	}
-};
-function hashString(s) {
-	let h = 2166136261;
-	for (let i = 0; i < s.length; i++) {
-		h ^= s.charCodeAt(i);
-		h = Math.imul(h, 16777619);
-	}
-	return h >>> 0;
-}
-var dailySeed = (dateKey) => hashString(`sssnake:${dateKey}`);
-//#endregion
 //#region src/game/engine.ts
 var SHED_WALL_MS = 15e3;
 var SHED_COOLDOWN_MS = 2500;
@@ -688,6 +1165,10 @@ var METER_REGEN_PER_MS = 1 / 3e4;
 var METER_PER_FOOD = .25;
 var SNAPSHOT_EVERY_MS = 400;
 var REWIND_BACK_MS = 2500;
+/** Endless: food kept on the board, how far it may be from your head, and the spawn radius. */
+var ENDLESS_FOOD = 5;
+var FOOD_LEASH = 24;
+var SPAWN_RADIUS = 11;
 /** Fields captured by rewind snapshots. */
 var STATE_KEYS = [
 	"time",
@@ -759,6 +1240,13 @@ var Game = class Game {
 	seed;
 	custom;
 	record;
+	/** Board size for this game: 24x24 arenas, or the Endless world. */
+	w;
+	h;
+	/** Endless: the generated world (biomes and landmarks); null in arena modes. */
+	world = null;
+	/** Endless: biome under player 1's head. */
+	biome = null;
 	status = "playing";
 	won = false;
 	/** Versus: winning player id, -1 for a draw. */
@@ -776,7 +1264,7 @@ var Game = class Game {
 	startArena = 0;
 	modifiers = /* @__PURE__ */ new Set();
 	/** Static solid cells: arena walls, maze walls and the collapsed border. */
-	solid = /* @__PURE__ */ new Uint8Array(576);
+	solid;
 	/** Walls destroyed by Cobra spit (cell indexes). */
 	broken = /* @__PURE__ */ new Set();
 	mazeIndex = 0;
@@ -797,7 +1285,7 @@ var Game = class Game {
 	boss = null;
 	wells = [];
 	arrows = [];
-	enclosed = /* @__PURE__ */ new Uint8Array(576);
+	enclosed;
 	mutations = [];
 	draftOptions = null;
 	rewinds = 0;
@@ -821,6 +1309,10 @@ var Game = class Game {
 	events = [];
 	constructor(opts) {
 		this.mode = MODES$1[opts.mode];
+		this.w = this.mode.world || 24;
+		this.h = this.mode.world || 24;
+		this.solid = new Uint8Array(this.w * this.h);
+		this.enclosed = new Uint8Array(this.w * this.h);
 		this.seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
 		this.rng = new Rng(this.seed);
 		this.custom = opts.level ?? null;
@@ -888,6 +1380,26 @@ var Game = class Game {
 	has(m) {
 		return this.mutations.includes(m);
 	}
+	inb(p) {
+		return p.x >= 0 && p.y >= 0 && p.x < this.w && p.y < this.h;
+	}
+	wrapAt(p) {
+		return {
+			x: (p.x + this.w) % this.w,
+			y: (p.y + this.h) % this.h
+		};
+	}
+	ix(p) {
+		return p.y * this.w + p.x;
+	}
+	/** Endless: the biome at a cell. */
+	biomeAt(p) {
+		return this.world ? biomeAt(this.world, p) : null;
+	}
+	/** Does food at this cell ripen? Per biome in Endless, per level elsewhere. */
+	ripensAt(p) {
+		return this.world ? biomeAt(this.world, p).modifiers.includes("ripening") : this.modifiers.has("ripening");
+	}
 	get wraps() {
 		return this.arena.wrap;
 	}
@@ -937,6 +1449,7 @@ var Game = class Game {
 		else if (this.mode.zen) b = 125;
 		else if (id === "versus") b = 120;
 		else if (id === "custom") b = Math.max(70, 125 - this.levelFoods);
+		else if (this.world) b = Math.max(70, 125 - this.p0.foods * 1.2);
 		else if (this.spec.boss) b = Math.max(85, 120 - this.spec.bossTier * 5);
 		else b = Math.max(55, 130 - (this.level - 1) * 7 - this.levelFoods * 1.5);
 		if (this.players.some((p) => p.alive && p.effects.slowmo)) b *= 1.8;
@@ -1212,7 +1725,7 @@ var Game = class Game {
 		for (const pk of this.pickups) {
 			pk.ttl -= dt;
 			pk.age += dt;
-			if (ripening && pk.kind === "food" && pk.age > RIPEN_MS) {
+			if ((this.world ? this.ripensAt(pk.pos) : ripening) && pk.kind === "food" && pk.age > RIPEN_MS) {
 				pk.kind = "rot";
 				pk.ttl = ROT_TTL_MS;
 				pk.maxTtl = ROT_TTL_MS;
@@ -1235,7 +1748,7 @@ var Game = class Game {
 					"food",
 					"bit",
 					"rot"
-				].includes(p.kind))) {
+				].includes(p.kind) && Number.isFinite(p.maxTtl))) {
 					const weights = [
 						["phase", 2],
 						["slowmo", this.mode.rhythm ? 0 : 2],
@@ -1252,8 +1765,13 @@ var Game = class Game {
 		if (this.spec.mice) {
 			this.mouseTimer -= dt;
 			if (this.mouseTimer <= 0) {
-				this.mouseTimer = this.rng.range(12e3, 18e3);
-				if (this.mice.length < 1 + Math.floor(this.level / 3)) this.spawnMouse(false);
+				if (this.world) {
+					this.mouseTimer = this.rng.range(5e3, 9e3);
+					if (this.mice.length < (this.biomeAt(this.p0.body[0])?.mice ?? 1)) this.spawnMouse(false);
+				} else {
+					this.mouseTimer = this.rng.range(12e3, 18e3);
+					if (this.mice.length < 1 + Math.floor(this.level / 3)) this.spawnMouse(false);
+				}
 			}
 		}
 		if (this.spec.rival && !this.rival) {
@@ -1325,6 +1843,7 @@ var Game = class Game {
 			if (apply && apply !== OPPOSITE[p.dir]) p.dir = apply;
 		} else if (next) p.dir = next;
 		this.advance(p, false);
+		if (this.world && p.id === 0) this.syncBiome();
 		if (this.record && p.id === 0 && p.alive) {
 			const h = p.body[0];
 			this.trail.push(Math.round(this.time), h.x, h.y, p.body.length);
@@ -1333,8 +1852,8 @@ var Game = class Game {
 	/** Move a player one cell. Returns false if it died, was stopped, or the level changed. */
 	advance(p, dashing) {
 		let head = add(p.body[0], DIRS[p.dir]);
-		if (!inBounds(head)) {
-			if (this.wraps) head = wrapPos(head);
+		if (!this.inb(head)) {
+			if (this.wraps) head = this.wrapAt(head);
 			else return this.hurt(p, "wall", p.body[0]);
 		}
 		const exit = this.portalExit(head);
@@ -1346,7 +1865,7 @@ var Game = class Game {
 			});
 			head = { ...exit };
 		}
-		if (this.solid[idx(head)]) return this.hurt(p, "wall", head);
+		if (this.solid[this.ix(head)]) return this.hurt(p, "wall", head);
 		if (this.bossAt(head)) return this.hurt(p, "boss", head);
 		const si = this.shedWalls.findIndex((w) => eq(w.pos, head));
 		if (si >= 0) {
@@ -1418,9 +1937,9 @@ var Game = class Game {
 				x: head.x + dx,
 				y: head.y + dy
 			};
-			if (!inBounds(c)) {
+			if (!this.inb(c)) {
 				if (!this.wraps) continue;
-				c = wrapPos(c);
+				c = this.wrapAt(c);
 			}
 			this.eatAt(p, c, 1);
 			if (this.level !== level || this.status !== "playing") return false;
@@ -1477,8 +1996,8 @@ var Game = class Game {
 		}
 	}
 	deadlyFor(p, c) {
-		if (!inBounds(c)) return !this.wraps;
-		if (this.solid[idx(c)] || this.bossAt(c)) return true;
+		if (!this.inb(c)) return !this.wraps;
+		if (this.solid[this.ix(c)] || this.bossAt(c)) return true;
 		if (this.shedWalls.some((w) => eq(w.pos, c))) return true;
 		if (this.mines.some((m) => eq(m.pos, c) && this.mineLit(m))) return true;
 		if (this.rival?.body.some((s) => eq(s, c))) return true;
@@ -1493,7 +2012,7 @@ var Game = class Game {
 		const order = [p.dir, ...DIR_LIST.filter((d) => d !== p.dir && d !== OPPOSITE[p.dir])];
 		for (const d of order) {
 			let c = add(p.body[0], DIRS[d]);
-			if (!inBounds(c) && this.wraps) c = wrapPos(c);
+			if (!this.inb(c) && this.wraps) c = this.wrapAt(c);
 			if (!this.deadlyFor(p, c)) return d;
 		}
 		return null;
@@ -1527,6 +2046,7 @@ var Game = class Game {
 			while (n >= 4 && this.trail[n - 4] > this.time) n -= 4;
 			this.trail.length = n;
 		}
+		this.syncBiome();
 		this.banner = {
 			title: "Rewind",
 			subtitle: `${this.rewinds} left`,
@@ -1587,7 +2107,7 @@ var Game = class Game {
 			p.lastEatTime = this.time;
 			let base = kind === "golden" ? 50 : kind === "bit" ? 5 : 10;
 			if (kind === "food" && this.has("glutton")) base *= 1.5;
-			if (kind === "food" && this.modifiers.has("ripening")) base *= 1 + Math.min(pk.age / 8e3, 2);
+			if (kind === "food" && this.ripensAt(pk.pos)) base *= 1 + Math.min(pk.age / 8e3, 2);
 			const mult = (this.mode.abilities ? p.combo : 1) * this.lengthMultP(p) * (this.isSurging(p) ? 2 : 1) * this.rhythmMult * coilMult;
 			const points = Math.round(base * mult);
 			p.score += points;
@@ -1694,12 +2214,12 @@ var Game = class Game {
 	}
 	checkCoil(p) {
 		if (!this.mode.abilities || !p.alive) return;
-		const barrier = /* @__PURE__ */ new Uint8Array(576);
-		for (const s of p.body) barrier[idx(s)] = 1;
-		for (const w of this.shedWalls) if (w.owner === p.id) barrier[idx(w.pos)] = 1;
-		const enc = findEnclosed(barrier);
+		const barrier = new Uint8Array(this.w * this.h);
+		for (const s of p.body) barrier[this.ix(s)] = 1;
+		for (const w of this.shedWalls) if (w.owner === p.id) barrier[this.ix(w.pos)] = 1;
+		const enc = findEnclosed(barrier, this.w, this.h);
 		this.enclosed = enc;
-		const inside = (c) => enc[idx(c)] === 1;
+		const inside = (c) => enc[this.ix(c)] === 1;
 		const mult = (this.has("constrictor") ? 3 : 2) + (p.cls === "python" ? 1 : 0);
 		let captured = 0;
 		let points = 0;
@@ -1750,8 +2270,8 @@ var Game = class Game {
 		this.bestCoil = Math.max(this.bestCoil, captured);
 		const cells = [];
 		for (let i = 0; i < enc.length; i++) if (enc[i]) cells.push({
-			x: i % 24,
-			y: Math.floor(i / 24)
+			x: i % this.w,
+			y: Math.floor(i / this.w)
 		});
 		this.events.push({
 			type: "coil",
@@ -1783,6 +2303,7 @@ var Game = class Game {
 			if (p.effects.magnet) this.pull(p.body[0], 6, 1);
 			else if (this.has("scales") && p.id === 0) this.pull(p.body[0], 3, 1);
 		}
+		if (this.world) this.tendFood();
 		if (this.wells.length) {
 			this.wellSkip = !this.wellSkip;
 			if (!this.wellSkip) for (const w of this.wells) this.pull(w, 6, 0, true);
@@ -1825,12 +2346,12 @@ var Game = class Game {
 			let alive = true;
 			for (let s = 0; s < 2 && alive; s++) {
 				let n = add(pr.pos, DIRS[pr.dir]);
-				if (!inBounds(n)) {
+				if (!this.inb(n)) {
 					if (!this.wraps) {
 						alive = false;
 						break;
 					}
-					n = wrapPos(n);
+					n = this.wrapAt(n);
 				}
 				pr.pos = n;
 				alive = !this.projectileHit(pr);
@@ -1851,9 +2372,9 @@ var Game = class Game {
 			});
 			return true;
 		};
-		if (this.solid[idx(c)]) {
-			if (!(c.x < this.ring || c.y < this.ring || c.x >= 24 - this.ring || c.y >= 24 - this.ring)) {
-				this.broken.add(idx(c));
+		if (this.solid[this.ix(c)]) {
+			if (!(c.x < this.ring || c.y < this.ring || c.x >= this.w - this.ring || c.y >= this.h - this.ring)) {
+				this.broken.add(this.ix(c));
 				this.rebuildSolid();
 			}
 			return hit();
@@ -1923,11 +2444,20 @@ var Game = class Game {
 	loadLevel(level, showBanner) {
 		this.level = level;
 		this.levelFoods = 0;
-		const spec = this.custom ? levelFromData(this.custom) : this.mode.levels ? arcadeLevel(level, this.startArena, this.rng, {
+		let treasure = [];
+		let spec;
+		if (this.mode.world) {
+			const gen = generateWorld(this.seed, this.w);
+			this.world = gen.world;
+			treasure = gen.treasure;
+			spec = gen.spec;
+		} else if (this.custom) spec = levelFromData(this.custom);
+		else if (this.mode.levels) spec = arcadeLevel(level, this.startArena, this.rng, {
 			hazards: this.mode.hazards,
 			bosses: this.mode.bosses,
 			twists: this.mode.twists
-		}) : simpleLevel(this.mode.arena === "custom" ? "box" : this.mode.arena, this.mode.powerUps);
+		});
+		else spec = simpleLevel(this.mode.arena === "custom" || this.mode.arena === "world" ? "box" : this.mode.arena, this.mode.powerUps);
 		this.spec = spec;
 		this.arena = spec.arena;
 		this.modifiers = new Set(spec.modifiers);
@@ -1979,7 +2509,7 @@ var Game = class Game {
 		this.boss = null;
 		this.snapshots = [];
 		this.snapTimer = 0;
-		this.enclosed = /* @__PURE__ */ new Uint8Array(576);
+		this.enclosed = new Uint8Array(this.w * this.h);
 		for (let i = 0; i < spec.randomMines; i++) {
 			const pos = this.freeCell(6);
 			if (pos) this.mines.push({
@@ -2001,6 +2531,12 @@ var Game = class Game {
 		this.rivalRespawn = spec.rival ? 3e3 : Infinity;
 		if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
 		this.spawnPickup("food", Infinity);
+		if (this.world) {
+			for (const t of treasure) this.spawnPickup(t.kind, Infinity, { ...t.pos });
+			for (let i = 1; i < ENDLESS_FOOD; i++) this.spawnPickup("food", Infinity);
+			this.biome = null;
+			this.syncBiome();
+		}
 		this.powerTimer = this.rng.range(5e3, 8e3);
 		this.mouseTimer = this.rng.range(7e3, 11e3);
 		this.banner = null;
@@ -2018,7 +2554,7 @@ var Game = class Game {
 		const cells = [{ ...head }];
 		let back = OPPOSITE[dir];
 		let cur = head;
-		const free = (c) => inBounds(c) && !this.solid[idx(c)] && !cells.some((s) => eq(s, c));
+		const free = (c) => this.inb(c) && !this.solid[this.ix(c)] && !cells.some((s) => eq(s, c));
 		for (let i = 1; i < len; i++) {
 			const d = [back, ...DIR_LIST.filter((d) => d !== back && d !== dir)].find((o) => free(add(cur, DIRS[o])));
 			if (d) {
@@ -2031,17 +2567,17 @@ var Game = class Game {
 	}
 	rebuildSolid() {
 		this.solid.fill(0);
-		for (const w of this.arena.walls) this.solid[idx(w)] = 1;
-		for (const w of this.mazeWalls) this.solid[idx(w)] = 1;
+		for (const w of this.arena.walls) this.solid[this.ix(w)] = 1;
+		for (const w of this.mazeWalls) this.solid[this.ix(w)] = 1;
 		for (const b of this.broken) this.solid[b] = 0;
 		const r = this.ring;
 		if (r > 0) {
-			for (let y = 0; y < 24; y++) for (let x = 0; x < 24; x++) if (x < r || y < r || x >= 24 - r || y >= 24 - r) this.solid[y * 24 + x] = 1;
+			for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) if (x < r || y < r || x >= this.w - r || y >= this.h - r) this.solid[y * this.w + x] = 1;
 		}
 	}
 	/** Move or drop anything now sitting inside a solid cell. */
 	evictFromSolid() {
-		const inSolid = (p) => this.solid[idx(p)] === 1;
+		const inSolid = (p) => this.solid[this.ix(p)] === 1;
 		const lost = this.pickups.filter((p) => inSolid(p.pos));
 		this.pickups = this.pickups.filter((p) => !inSolid(p.pos));
 		for (const p of lost) if (p.kind === "food") this.spawnPickup("food", Infinity);
@@ -2087,34 +2623,16 @@ var Game = class Game {
 	}
 	/** Cell free of everything; optionally at least `minDist` from every snake head. */
 	freeCell(minDist = 3, near) {
-		const heads = this.players.filter((p) => p.alive && p.body.length).map((p) => p.body[0]);
-		const ok = (p) => {
-			if (this.solid[idx(p)] || this.enclosed[idx(p)]) return false;
-			if (near && chebyshev(p, near.at) > near.radius) return false;
-			if (heads.some((h) => manhattan(p, h) < minDist)) return false;
-			if (this.collapseWarning && this.inNextRing(p)) return false;
-			if (this.pendingMaze?.some((w) => eq(w, p))) return false;
-			if (this.portalExit(p)) return false;
-			if (this.bossAt(p)) return false;
-			if (this.players.some((pl) => pl.body.some((s) => eq(s, p)))) return false;
-			if (this.pickups.some((s) => eq(s.pos, p))) return false;
-			if (this.shedWalls.some((s) => eq(s.pos, p))) return false;
-			if (this.mines.some((s) => eq(s.pos, p))) return false;
-			if (this.mice.some((s) => eq(s.pos, p))) return false;
-			if (this.wells.some((s) => eq(s, p))) return false;
-			if (this.arrows.some((s) => eq(s.pos, p))) return false;
-			if (this.rival?.body.some((s) => eq(s, p))) return false;
-			if (this.inSpawnLane(p)) return false;
-			return true;
-		};
+		const heads = this.liveHeads();
+		const ok = (p) => (!near || chebyshev(p, near.at) <= near.radius) && this.spawnable(p, minDist, heads);
 		for (let i = 0; i < 200; i++) {
 			const p = {
-				x: this.rng.int(24),
-				y: this.rng.int(24)
+				x: this.rng.int(this.w),
+				y: this.rng.int(this.h)
 			};
 			if (ok(p)) return p;
 		}
-		for (let y = 0; y < 24; y++) for (let x = 0; x < 24; x++) if (ok({
+		for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) if (ok({
 			x,
 			y
 		})) return {
@@ -2124,12 +2642,70 @@ var Game = class Game {
 		if (near) return this.freeCell(minDist);
 		return minDist > 0 ? this.freeCell(0) : null;
 	}
+	liveHeads() {
+		return this.players.filter((p) => p.alive && p.body.length).map((p) => p.body[0]);
+	}
+	/** Free of everything and at least `minDist` (Manhattan) from every head. */
+	spawnable(p, minDist, heads) {
+		if (this.solid[this.ix(p)] || this.enclosed[this.ix(p)]) return false;
+		if (heads.some((h) => manhattan(p, h) < minDist)) return false;
+		if (this.collapseWarning && this.inNextRing(p)) return false;
+		if (this.pendingMaze?.some((w) => eq(w, p))) return false;
+		if (this.portalExit(p)) return false;
+		if (this.bossAt(p)) return false;
+		if (this.players.some((pl) => pl.body.some((s) => eq(s, p)))) return false;
+		if (this.pickups.some((s) => eq(s.pos, p))) return false;
+		if (this.shedWalls.some((s) => eq(s.pos, p))) return false;
+		if (this.mines.some((s) => eq(s.pos, p))) return false;
+		if (this.mice.some((s) => eq(s.pos, p))) return false;
+		if (this.wells.some((s) => eq(s, p))) return false;
+		if (this.arrows.some((s) => eq(s.pos, p))) return false;
+		if (this.rival?.body.some((s) => eq(s, p))) return false;
+		if (this.inSpawnLane(p)) return false;
+		return true;
+	}
+	/** Where new things appear: anywhere on an arena, near player 1 in the Endless world. */
+	spawnCell(minDist) {
+		if (!this.world) return this.freeCell(minDist);
+		const at = this.p0.body[0];
+		const heads = this.liveHeads();
+		const span = 23;
+		for (let i = 0; i < 120; i++) {
+			const p = {
+				x: at.x - SPAWN_RADIUS + this.rng.int(span),
+				y: at.y - SPAWN_RADIUS + this.rng.int(span)
+			};
+			if (this.inb(p) && this.spawnable(p, minDist, heads)) return p;
+		}
+		return null;
+	}
+	/** Twists follow the biome under player 1's head. */
+	syncBiome() {
+		const head = this.p0.body[0];
+		if (!this.world || !head) return;
+		const b = biomeAt(this.world, head);
+		if (b.id === this.biome) return;
+		this.biome = b.id;
+		this.modifiers = new Set(b.modifiers);
+	}
+	/** Keep a few foods near the head: far ones move closer, missing ones are topped up. */
+	tendFood() {
+		const head = this.p0.body[0];
+		if (!head) return;
+		let foods = 0;
+		for (const pk of [...this.pickups]) {
+			if (pk.kind !== "food") continue;
+			if (chebyshev(pk.pos, head) > FOOD_LEASH) this.pickups.splice(this.pickups.indexOf(pk), 1);
+			else foods++;
+		}
+		if (foods < ENDLESS_FOOD) this.spawnPickup("food", Infinity);
+	}
 	inNextRing(p) {
 		const r = this.ring + 1;
-		return p.x < r || p.y < r || p.x >= 24 - r || p.y >= 24 - r;
+		return p.x < r || p.y < r || p.x >= this.w - r || p.y >= this.h - r;
 	}
 	spawnPickup(kind, ttl, at) {
-		const pos = at ?? this.freeCell(3);
+		const pos = at ?? this.spawnCell(3);
 		if (!pos) return;
 		this.pickups.push({
 			id: this.nextId++,
@@ -2141,7 +2717,7 @@ var Game = class Game {
 		});
 	}
 	spawnMouse(drone, near) {
-		const pos = this.freeCell(drone ? 3 : 6, near);
+		const pos = this.world && !near ? this.spawnCell(6) : this.freeCell(drone ? 3 : 6, near);
 		if (pos) this.mice.push({
 			id: this.nextId++,
 			pos,
@@ -2152,8 +2728,8 @@ var Game = class Game {
 		});
 	}
 	blockedForCritter(p, self, ignoreShed = false) {
-		if (!inBounds(p)) return true;
-		if (this.solid[idx(p)]) return true;
+		if (!this.inb(p)) return true;
+		if (this.solid[this.ix(p)]) return true;
 		if (this.portalExit(p)) return true;
 		if (this.bossAt(p)) return true;
 		if (!ignoreShed && this.shedWalls.some((w) => eq(w.pos, p))) return true;
@@ -2167,7 +2743,7 @@ var Game = class Game {
 	}
 	neighbour(p, d) {
 		const n = add(p, DIRS[d]);
-		return this.wraps ? wrapPos(n) : n;
+		return this.wraps ? this.wrapAt(n) : n;
 	}
 	stepMice() {
 		this.miceSkip = !this.miceSkip;
@@ -2185,8 +2761,8 @@ var Game = class Game {
 		const head = this.p0.body[0];
 		for (let tries = 0; tries < 80; tries++) {
 			const start = {
-				x: this.rng.int(24),
-				y: this.rng.int(24)
+				x: this.rng.int(this.w),
+				y: this.rng.int(this.h)
 			};
 			const dir = this.rng.pick(DIR_LIST);
 			const back = DIRS[OPPOSITE[dir]];
@@ -2213,16 +2789,16 @@ var Game = class Game {
 	/** BFS towards the nearest target cell; falls back to any safe move. */
 	pathStep(head, dir, body, targets, ignoreShed, avoid) {
 		const blocked = (c) => this.blockedForCritter(c, body, ignoreShed) || (avoid?.(c) ?? false);
-		const safe = DIR_LIST.filter((d) => d !== OPPOSITE[dir]).filter((d) => !blocked(this.neighbour(head, d)) || targets.has(idx(this.neighbour(head, d))));
+		const safe = DIR_LIST.filter((d) => d !== OPPOSITE[dir]).filter((d) => !blocked(this.neighbour(head, d)) || targets.has(this.ix(this.neighbour(head, d))));
 		if (!safe.length) return null;
 		if (targets.size) {
-			const seen = /* @__PURE__ */ new Uint8Array(576);
-			seen[idx(head)] = 1;
+			const seen = new Uint8Array(this.w * this.h);
+			seen[this.ix(head)] = 1;
 			const queue = [];
 			for (const d of safe) {
 				const n = this.neighbour(head, d);
-				if (!inBounds(n) || seen[idx(n)]) continue;
-				seen[idx(n)] = 1;
+				if (!this.inb(n) || seen[this.ix(n)]) continue;
+				seen[this.ix(n)] = 1;
 				queue.push({
 					p: n,
 					first: d
@@ -2230,12 +2806,12 @@ var Game = class Game {
 			}
 			for (let qi = 0; qi < queue.length; qi++) {
 				const { p, first } = queue[qi];
-				if (targets.has(idx(p))) return first;
+				if (targets.has(this.ix(p))) return first;
 				for (const d of DIR_LIST) {
 					const n = this.neighbour(p, d);
-					if (!inBounds(n) || seen[idx(n)]) continue;
-					if (blocked(n) && !targets.has(idx(n))) continue;
-					seen[idx(n)] = 1;
+					if (!this.inb(n) || seen[this.ix(n)]) continue;
+					if (blocked(n) && !targets.has(this.ix(n))) continue;
+					seen[this.ix(n)] = 1;
 					queue.push({
 						p: n,
 						first
@@ -2248,7 +2824,7 @@ var Game = class Game {
 	stepRival() {
 		const r = this.rival;
 		const venom = this.has("venom");
-		const targets = new Set(this.pickups.filter((p) => p.kind === "food" || p.kind === "bit").map((p) => idx(p.pos)));
+		const targets = new Set(this.pickups.filter((p) => p.kind === "food" || p.kind === "bit").map((p) => this.ix(p.pos)));
 		const dir = (this.rng.next() < .12 ? null : this.pathStep(r.body[0], r.dir, r.body, targets, venom)) ?? (() => {
 			const safe = DIR_LIST.filter((x) => x !== OPPOSITE[r.dir] && !this.blockedForCritter(this.neighbour(r.body[0], x), r.body, venom));
 			return safe.length ? this.rng.pick(safe) : null;
@@ -2314,7 +2890,7 @@ var Game = class Game {
 	dropBits(cells) {
 		for (let i = 1; i < cells.length; i += 2) {
 			const p = cells[i];
-			if (inBounds(p) && !this.solid[idx(p)] && !this.pickups.some((q) => eq(q.pos, p)) && !this.players.some((pl) => pl.body.some((s) => eq(s, p)))) this.spawnPickup("bit", BIT_TTL_MS, { ...p });
+			if (this.inb(p) && !this.solid[this.ix(p)] && !this.pickups.some((q) => eq(q.pos, p)) && !this.players.some((pl) => pl.body.some((s) => eq(s, p)))) this.spawnPickup("bit", BIT_TTL_MS, { ...p });
 		}
 	}
 	spawnBoss(kind, tier) {
@@ -2414,8 +2990,8 @@ var Game = class Game {
 		if (!target) return;
 		const th = target.body[0];
 		const ahead = add(th, DIRS[target.dir]);
-		const targets = /* @__PURE__ */ new Set([idx(th)]);
-		if (inBounds(ahead)) targets.add(idx(ahead));
+		const targets = /* @__PURE__ */ new Set([this.ix(th)]);
+		if (this.inb(ahead)) targets.add(this.ix(ahead));
 		const saved = this.boss;
 		this.boss = null;
 		const d = this.pathStep(b.body[0], b.dir, b.body, targets, true, (c) => this.players.some((p) => p.alive && p.body.slice(1).some((s) => eq(s, c))));
@@ -2494,7 +3070,8 @@ var MODES = [
 	"zen",
 	"rhythm",
 	"versus",
-	"custom"
+	"custom",
+	"endless"
 ];
 var CLASSES = [
 	"racer",

@@ -45,7 +45,7 @@ const MAZES: Vec[][] = [
   ],
 ];
 
-export const ARENAS: Record<Exclude<ArenaId, 'custom'>, Arena> = {
+export const ARENAS: Record<Exclude<ArenaId, 'custom' | 'world'>, Arena> = {
   box: {
     id: 'box',
     name: 'Classic Box',
@@ -101,4 +101,4 @@ export const ARENAS: Record<Exclude<ArenaId, 'custom'>, Arena> = {
   },
 };
 
-export const ARENA_ORDER: Exclude<ArenaId, 'custom'>[] = ['box', 'wrap', 'portals', 'maze', 'collapse'];
+export const ARENA_ORDER: Exclude<ArenaId, 'custom' | 'world'>[] = ['box', 'wrap', 'portals', 'maze', 'collapse'];

@@ -1,10 +1,10 @@
-import { H, W } from './types';
+import { H as DEFAULT_H, W as DEFAULT_W } from './types';
 
 /**
  * Cells sealed off from the board edge by `barrier` cells (4-connected flood fill from the
  * border). Returns a mask: 1 = enclosed, 0 = outside or barrier.
  */
-export function findEnclosed(barrier: Uint8Array): Uint8Array {
+export function findEnclosed(barrier: Uint8Array, W = DEFAULT_W, H = DEFAULT_H): Uint8Array {
   const seen = new Uint8Array(W * H);
   const stack: number[] = [];
   const push = (i: number) => {

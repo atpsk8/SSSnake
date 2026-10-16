@@ -1,3 +1,4 @@
+/** Size of the standard arena. Board size is per game (`game.w` / `game.h`); Endless is bigger. */
 export const W = 24;
 export const H = 24;
 
@@ -24,8 +25,8 @@ export const OPPOSITE: Record<Dir, Dir> = {
   right: 'left',
 };
 
-export type ModeId = 'classic' | 'arcade' | 'daily' | 'zen' | 'rhythm' | 'versus' | 'custom';
-export type ArenaId = 'box' | 'wrap' | 'portals' | 'maze' | 'collapse' | 'custom';
+export type ModeId = 'classic' | 'arcade' | 'daily' | 'zen' | 'rhythm' | 'versus' | 'custom' | 'endless';
+export type ArenaId = 'box' | 'wrap' | 'portals' | 'maze' | 'collapse' | 'custom' | 'world';
 
 export type SnakeClass = 'racer' | 'viper' | 'cobra' | 'python';
 
@@ -151,8 +152,9 @@ export type GameEvent =
 
 export const eq = (a: Vec, b: Vec) => a.x === b.x && a.y === b.y;
 export const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y });
-export const inBounds = (p: Vec) => p.x >= 0 && p.y >= 0 && p.x < W && p.y < H;
-export const wrapPos = (p: Vec): Vec => ({ x: (p.x + W) % W, y: (p.y + H) % H });
-export const idx = (p: Vec) => p.y * W + p.x;
+// Board helpers default to the standard 24x24 arena; pass the game's size for other boards.
+export const inBounds = (p: Vec, w = W, h = H) => p.x >= 0 && p.y >= 0 && p.x < w && p.y < h;
+export const wrapPos = (p: Vec, w = W, h = H): Vec => ({ x: (p.x + w) % w, y: (p.y + h) % h });
+export const idx = (p: Vec, w = W) => p.y * w + p.x;
 export const manhattan = (a: Vec, b: Vec) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 export const chebyshev = (a: Vec, b: Vec) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));

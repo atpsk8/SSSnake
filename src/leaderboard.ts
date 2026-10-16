@@ -32,7 +32,7 @@ async function parse(res: Response): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** Boards with a global leaderboard (Zen, Versus and Custom stay local). */
+/** Boards with a global leaderboard (Zen, Endless, Versus and Custom stay local). */
 export const globalBoard = (board: string) => /^(classic|arcade|rhythm|daily:\d{4}-\d{2}-\d{2})$/.test(board);
 
 export async function fetchGlobal(board: string): Promise<FetchResult> {

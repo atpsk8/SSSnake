@@ -140,7 +140,7 @@ const selectedClass = (): SnakeClass =>
 const playerName = () => data.settings.name.trim() || 'guest';
 
 function boardKey(mode: ModeId): string | null {
-  if (mode === 'classic' || mode === 'arcade' || mode === 'rhythm') return mode;
+  if (mode === 'classic' || mode === 'arcade' || mode === 'rhythm' || mode === 'endless') return mode;
   if (mode === 'daily') return `daily:${dailyKey}`;
   return null;
 }
@@ -698,7 +698,8 @@ function updateHud(g: Game) {
   else if (g.mode.rhythm) label = `${Math.round(g.bpm)} BPM`;
   setText('levelLabel', label);
   const twists = [...g.modifiers].map((m) => MODIFIER_INFO[m].name.toLowerCase()).join('+');
-  setText('arenaName', twists ? `${g.arena.name.toLowerCase()} +${twists}` : g.arena.name.toLowerCase());
+  const place = g.world ? (g.biomeAt(g.p0.body[0] ?? { x: 0, y: 0 })?.name ?? g.arena.name) : g.arena.name;
+  setText('arenaName', twists ? `${place.toLowerCase()} +${twists}` : place.toLowerCase());
 
   const def = CLASSES[p.cls];
   setText('abilityName', def.ability);
@@ -1068,6 +1069,7 @@ function setDefaultChips() {
   term.setChips([
     { label: 'play', cmd: 'play' },
     { label: 'daily', cmd: 'daily' },
+    { label: 'endless', cmd: 'endless' },
     { label: 'match', cmd: 'match' },
     { label: 'invite', cmd: 'invite' },
     { label: 'join', cmd: 'join', fill: true },
@@ -1132,7 +1134,7 @@ function boot() {
     ['', 'out'],
     ['slither. shed. surge.', 'title'],
     [`daily ${dailyKey}: ${best ? `best ${best.toLocaleString()}` : 'not played yet'}${data.ghosts[dailyKey] ? ', ghost saved' : ''}`, 'dim'],
-    ['type {help} or tap a command. {play} starts arcade. {match} finds an online opponent; {invite} plays a friend.', 'out'],
+    ['type {help} or tap a command. {play} starts arcade; {endless} explores a huge world. {match} finds an online opponent; {invite} plays a friend.', 'out'],
     ['change the look any time: {terminal|theme terminal} {nokia|theme nokia} {gameboy|theme gameboy} {paper|theme paper} {minimal|theme minimal}', 'dim'],
   ];
   term.boot(lines, data.settings.reducedMotion, () => {

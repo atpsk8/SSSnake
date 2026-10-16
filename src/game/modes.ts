@@ -1,4 +1,5 @@
 import type { ArenaId, ModeId } from './types';
+import { WORLD_SIZE } from './world';
 
 export interface ModeConfig {
   id: ModeId;
@@ -21,6 +22,8 @@ export interface ModeConfig {
   /** No death: self-hits cut the tail, shed walls just crumble. */
   zen: boolean;
   arena: ArenaId;
+  /** Side of the generated Endless world; 0 = the standard 24x24 arena. */
+  world: number;
 }
 
 const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
@@ -37,6 +40,7 @@ const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
   rhythm: false,
   zen: false,
   arena: 'box',
+  world: 0,
 };
 
 export const MODES: Record<ModeId, ModeConfig> = {
@@ -96,6 +100,16 @@ export const MODES: Record<ModeId, ModeConfig> = {
     blurb: 'Two players, one screen. Best of three.',
     players: 2,
   },
+  endless: {
+    ...base,
+    id: 'endless',
+    name: 'Endless',
+    blurb: 'A huge world of biomes and landmarks. Explore until you crash.',
+    hazards: true,
+    rewinds: 1,
+    arena: 'world',
+    world: WORLD_SIZE,
+  },
   custom: {
     ...base,
     id: 'custom',
@@ -104,4 +118,4 @@ export const MODES: Record<ModeId, ModeConfig> = {
   },
 };
 
-export const MODE_ORDER: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'versus'];
+export const MODE_ORDER: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'endless', 'versus'];

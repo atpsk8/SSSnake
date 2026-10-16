@@ -1,6 +1,6 @@
 import type { Game, Player } from './game/engine';
 import { Rng } from './game/rng';
-import { DIRS, DIR_LIST, H, OPPOSITE, W, add, idx, inBounds, manhattan, wrapPos, type Dir, type Vec } from './game/types';
+import { DIRS, DIR_LIST, OPPOSITE, add, manhattan, type Dir, type Vec } from './game/types';
 import type { Input } from './replay';
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -53,7 +53,7 @@ export class Bot {
       if (d === OPPOSITE[facing]) continue;
       const c = this.step(g, me.body[0], d);
       let score: number;
-      if (!c || blocked[idx(c)]) score = -1e9;
+      if (!c || blocked[g.ix(c)]) score = -1e9;
       else {
         const space = this.flood(g, c, blocked, me.body.length + 20);
         score = space < me.body.length ? -1e6 + space : 0;
@@ -104,7 +104,7 @@ export class Bot {
       // Aim a couple of cells ahead of the opponent to cut them off.
       const d = DIRS[opp.dir];
       const ahead = { x: opp.body[0].x + d.x * 3, y: opp.body[0].y + d.y * 3 };
-      if (inBounds(ahead) && manhattan(ahead, head) < 12) return ahead;
+      if (g.inb(ahead) && manhattan(ahead, head) < 12) return ahead;
     }
     if (opp && this.personality === 'trickster' && nearest && manhattan(nearest, opp.body[0]) < manhattan(nearest, head)) {
       // Losing the race for food: hang around the opponent's path instead.
@@ -115,51 +115,51 @@ export class Bot {
 
   private step(g: Game, from: Vec, d: Dir): Vec | null {
     let c = add(from, DIRS[d]);
-    if (!inBounds(c)) {
+    if (!g.inb(c)) {
       if (!g.wraps) return null;
-      c = wrapPos(c);
+      c = g.wrapAt(c);
     }
     return g.portalExit(c) ?? c;
   }
 
   private blockedMap(g: Game, me: Player): Uint8Array {
-    const b = new Uint8Array(W * H);
+    const b = new Uint8Array(g.w * g.h);
     for (let i = 0; i < b.length; i++) b[i] = g.solid[i];
-    for (const w of g.shedWalls) b[idx(w.pos)] = 1;
-    for (const m of g.mines) b[idx(m.pos)] = 1;
-    for (const c of g.bossCells()) b[idx(c)] = 1;
+    for (const w of g.shedWalls) b[g.ix(w.pos)] = 1;
+    for (const m of g.mines) b[g.ix(m.pos)] = 1;
+    for (const c of g.bossCells()) b[g.ix(c)] = 1;
     for (const p of g.players) {
       if (!p.alive) continue;
       // Our own tail tip moves out of the way.
       const len = p === me ? p.body.length - 1 : p.body.length;
-      for (let i = 0; i < len; i++) b[idx(p.body[i])] = 1;
+      for (let i = 0; i < len; i++) b[g.ix(p.body[i])] = 1;
       // Avoid head-on collisions with a bigger snake.
       if (p !== me && p.body.length >= me.body.length) {
         for (const d of DIR_LIST) {
           const c = add(p.body[0], DIRS[d]);
-          if (inBounds(c)) b[idx(c)] = 1;
+          if (g.inb(c)) b[g.ix(c)] = 1;
         }
       }
     }
-    if (g.rival) for (const s of g.rival.body) b[idx(s)] = 1;
+    if (g.rival) for (const s of g.rival.body) b[g.ix(s)] = 1;
     return b;
   }
 
   private flood(g: Game, start: Vec, blocked: Uint8Array, limit: number): number {
-    const seen = new Uint8Array(W * H);
+    const seen = new Uint8Array(g.w * g.h);
     const stack = [start];
-    seen[idx(start)] = 1;
+    seen[g.ix(start)] = 1;
     let n = 0;
     while (stack.length && n < limit) {
       const c = stack.pop()!;
       n++;
       for (const d of DIR_LIST) {
         let nx = add(c, DIRS[d]);
-        if (!inBounds(nx)) {
+        if (!g.inb(nx)) {
           if (!g.wraps) continue;
-          nx = wrapPos(nx);
+          nx = g.wrapAt(nx);
         }
-        const i = idx(nx);
+        const i = g.ix(nx);
         if (seen[i] || blocked[i]) continue;
         seen[i] = 1;
         stack.push(nx);

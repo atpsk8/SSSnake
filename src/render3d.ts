@@ -6,12 +6,14 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Game } from './game/engine';
 import { DIRS, H, W, type Dir, type GameEvent, type PickupKind, type Vec } from './game/types';
+import { BIOMES, LANDMARK_NAME, type BiomeId } from './game/world';
 import type { SkinId } from './storage';
 
 /**
  * "Neo": the 3D renderer. Glossy neon tube snakes on a reflective arena, bloom, a follow
  * camera that swoops in for instant replays, GPU-ish particles and light shockwaves.
  * Same contract as the 2D Renderer: reset / handle(events) / draw(game, dt).
+ * Boards bigger than 24x24 (Endless) get a biome-tinted floor and a camera that follows the head.
  */
 
 export type Quality = 'high' | 'low';
@@ -42,9 +44,25 @@ const COLORS = {
 
 const SKIN_COLOR: Record<SkinId, number> = { classic: COLORS.p1, ember: 0xff8a3d, ghost: 0xe6f0ff, gold: COLORS.gold };
 
+/** Endless floor colour per biome. */
+const BIOME_FLOOR: Record<BiomeId, number> = {
+  meadow: COLORS.floor,
+  glacier: 0x10233c,
+  shadow: 0x030409,
+  orchard: 0x101b0d,
+  vortex: 0x180d28,
+  circuit: 0x07191c,
+  badlands: 0x210f0b,
+};
+/** Big boards only draw items this close (in cells) to the camera target. */
+const CULL = 30;
+
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const wx = (x: number) => x - W / 2 + 0.5;
-const wz = (y: number) => y - H / 2 + 0.5;
+// Board size of the game being drawn; set by Renderer3D.setBoard().
+let BW = W;
+let BH = H;
+const wx = (x: number) => x - BW / 2 + 0.5;
+const wz = (y: number) => y - BH / 2 + 0.5;
 
 function slide(cur: Vec[], prev: Vec[], t: number): Vec[] {
   return cur.map((c, i) => {
@@ -103,7 +121,13 @@ export class Renderer3D {
   private hemi: THREE.HemisphereLight;
   private headLights: THREE.PointLight[] = [];
   private floorMat: THREE.MeshStandardMaterial;
+  private floor: THREE.Mesh;
+  private outer: THREE.Mesh;
   private frame: THREE.LineSegments;
+  private bw = W;
+  private bh = H;
+  private lastBiome: BiomeId | null = null;
+  private landmarksSeen = new Set<number>();
 
   private walls: THREE.InstancedMesh;
   private ringWalls: THREE.InstancedMesh;
@@ -213,43 +237,25 @@ export class Renderer3D {
     }
 
     // Arena floor with a faint glowing grid.
-    const grid = document.createElement('canvas');
-    grid.width = grid.height = 512;
-    const g2 = grid.getContext('2d')!;
-    g2.fillStyle = '#000';
-    g2.fillRect(0, 0, 512, 512);
-    g2.strokeStyle = COLORS.grid;
-    g2.lineWidth = 2;
-    for (let i = 0; i <= W; i++) {
-      const p = (i / W) * 512;
-      g2.beginPath();
-      g2.moveTo(p, 0);
-      g2.lineTo(p, 512);
-      g2.moveTo(0, p);
-      g2.lineTo(512, p);
-      g2.stroke();
-    }
-    const gridTex = new THREE.CanvasTexture(grid);
-    gridTex.colorSpace = THREE.SRGBColorSpace;
     this.floorMat = new THREE.MeshStandardMaterial({
       color: COLORS.floor,
       roughness: 0.32,
       metalness: 0.55,
       emissive: 0xffffff,
-      emissiveMap: gridTex,
+      emissiveMap: gridTexture(W, 1),
       emissiveIntensity: 0.6,
     });
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, H), this.floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = high;
-    this.scene.add(floor);
-    const outer = new THREE.Mesh(
+    this.floor = new THREE.Mesh(new THREE.PlaneGeometry(W, H), this.floorMat);
+    this.floor.rotation.x = -Math.PI / 2;
+    this.floor.receiveShadow = high;
+    this.scene.add(this.floor);
+    this.outer = new THREE.Mesh(
       new THREE.PlaneGeometry(140, 140),
       new THREE.MeshStandardMaterial({ color: 0x03050a, roughness: 0.9, metalness: 0 }),
     );
-    outer.rotation.x = -Math.PI / 2;
-    outer.position.y = -0.02;
-    this.scene.add(outer);
+    this.outer.rotation.x = -Math.PI / 2;
+    this.outer.position.y = -0.02;
+    this.scene.add(this.outer);
 
     const edge = new THREE.EdgesGeometry(new THREE.BoxGeometry(W, 0.001, H));
     this.frame = new THREE.LineSegments(edge, new THREE.LineBasicMaterial({ color: COLORS.p1, transparent: true, opacity: 0.6 }));
@@ -376,6 +382,106 @@ export class Renderer3D {
     this.flash = 0;
     this.ghost = null;
     this.boardKey = '';
+    this.lastBiome = null;
+    this.landmarksSeen.clear();
+  }
+
+  private get big() {
+    return this.bw > W || this.bh > H;
+  }
+
+  /** Match the floor, frame and instance buffers to this game's board size. */
+  private setBoard(game: Game) {
+    BW = game.w;
+    BH = game.h;
+    const tintKey = game.world ? game.world.biome : null;
+    if (game.w === this.bw && game.h === this.bh && (this.floorMat.map?.userData.biome ?? null) === tintKey) return;
+    const resized = game.w !== this.bw || game.h !== this.bh;
+    this.bw = game.w;
+    this.bh = game.h;
+    if (resized) {
+      this.floor.geometry.dispose();
+      this.floor.geometry = new THREE.PlaneGeometry(this.bw, this.bh);
+      this.floorMat.emissiveMap?.dispose();
+      this.floorMat.emissiveMap = this.big ? gridTexture(16, this.bw / 16) : gridTexture(W, 1);
+      this.outer.geometry.dispose();
+      this.outer.geometry = new THREE.PlaneGeometry(Math.max(140, this.bw + 80), Math.max(140, this.bh + 80));
+      this.frame.geometry.dispose();
+      this.frame.geometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(this.bw, 0.001, this.bh));
+      const cap = this.bw * this.bh;
+      this.walls = this.regrow(this.walls, cap);
+      this.ringWalls = this.regrow(this.ringWalls, cap);
+      this.pending = this.regrow(this.pending, cap);
+      this.sheds = this.regrow(this.sheds, cap);
+      this.coilTiles = this.regrow(this.coilTiles, cap);
+      this.boardKey = '';
+      if (this.big) {
+        this.scene.fog = new THREE.Fog(COLORS.bg, 24, 52);
+        this.scene.add(this.keyLight.target);
+      } else {
+        this.scene.fog = new THREE.Fog(COLORS.bg, 28, 62);
+        this.keyLight.position.set(8, 22, 10);
+        this.keyLight.target.position.set(0, 0, 0);
+        this.keyLight.target.updateMatrixWorld();
+      }
+    }
+    // Endless: tint the floor by biome, one texel per chunk, blended at the borders.
+    this.floorMat.map?.dispose();
+    if (game.world) {
+      const wd = game.world;
+      const data = new Uint8Array(wd.cols * wd.rows * 4);
+      for (let i = 0; i < wd.biome.length; i++) {
+        const hex = BIOME_FLOOR[BIOMES[wd.biome[i]].id];
+        // Texture rows run bottom-up; chunk rows run top-down (north first).
+        const row = wd.rows - 1 - Math.floor(i / wd.cols);
+        data.set([(hex >> 16) & 255, (hex >> 8) & 255, hex & 255, 255], (row * wd.cols + (i % wd.cols)) * 4);
+      }
+      const tex = new THREE.DataTexture(data, wd.cols, wd.rows);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      tex.userData.biome = wd.biome;
+      this.floorMat.map = tex;
+      this.floorMat.color.setHex(0xffffff);
+    } else {
+      this.floorMat.map = null;
+      this.floorMat.color.setHex(COLORS.floor);
+    }
+    this.floorMat.needsUpdate = true;
+  }
+
+  private regrow(old: THREE.InstancedMesh, cap: number): THREE.InstancedMesh {
+    this.scene.remove(old);
+    old.dispose();
+    const m = new THREE.InstancedMesh(old.geometry, old.material, cap);
+    m.castShadow = old.castShadow;
+    m.receiveShadow = old.receiveShadow;
+    m.count = 0;
+    this.scene.add(m);
+    return m;
+  }
+
+  /** Big boards: is a cell near enough to the camera to be worth drawing? */
+  private near(p: Vec): boolean {
+    return !this.big || (Math.abs(wx(p.x) - this.target.x) <= CULL && Math.abs(wz(p.y) - this.target.z) <= CULL);
+  }
+
+  /** Endless: pop the biome's name on entering it, and a landmark's when it first comes close. */
+  private announce(game: Game) {
+    const wd = game.world;
+    const head = game.p0.body[0];
+    if (!wd || !head || game.status !== 'playing' || this.camera) return;
+    if (game.biome && game.biome !== this.lastBiome) {
+      this.lastBiome = game.biome;
+      const b = BIOMES.find((x) => x.id === game.biome)!;
+      this.popup(b.name.toUpperCase(), { x: head.x, y: head.y - 2 }, '#e6f7ff', true);
+    }
+    wd.landmarks.forEach((l, i) => {
+      if (this.landmarksSeen.has(i) || Math.max(Math.abs(l.pos.x - head.x), Math.abs(l.pos.y - head.y)) > 7) return;
+      this.landmarksSeen.add(i);
+      this.popup(LANDMARK_NAME[l.kind].toUpperCase(), { x: l.pos.x, y: l.pos.y - 2 }, '#ffd166', true);
+    });
   }
 
   // ---------------------------------------------------------------- effects
@@ -427,6 +533,7 @@ export class Renderer3D {
   }
 
   handle(events: GameEvent[], game: Game) {
+    this.setBoard(game);
     const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
     for (const e of events) {
       switch (e.type) {
@@ -562,7 +669,9 @@ export class Renderer3D {
     this.flash = Math.max(0, this.flash - dt / 500);
     this.beat = Math.max(0, this.beat - dt / 220);
 
+    this.setBoard(game);
     this.updateBoard(game);
+    this.announce(game);
     this.tubeUsed = 0;
     this.headUsed = 0;
 
@@ -817,6 +926,7 @@ export class Renderer3D {
   private drawPickups(game: Game, t: number) {
     const seen = new Set<number>();
     for (const pk of game.pickups) {
+      if (!this.near(pk.pos)) continue;
       seen.add(pk.id);
       let mesh = this.pickupMeshes.get(pk.id);
       if (!mesh) {
@@ -872,7 +982,8 @@ export class Renderer3D {
   }
 
   private drawMines(game: Game, t: number) {
-    while (this.mineMeshes.length < game.mines.length) {
+    const mines = this.big ? game.mines.filter((m) => this.near(m.pos)) : game.mines;
+    while (this.mineMeshes.length < mines.length) {
       const g = new THREE.Group();
       const core = new THREE.Mesh(this.geo.mineCore, this.material(COLORS.mine, 0, 0.7));
       core.name = 'core';
@@ -889,7 +1000,7 @@ export class Renderer3D {
       this.mineMeshes.push(g);
     }
     this.mineMeshes.forEach((g, i) => {
-      const m = game.mines[i];
+      const m = mines[i];
       g.visible = !!m;
       if (!m) return;
       const lit = game.mineLit(m);
@@ -951,14 +1062,15 @@ export class Renderer3D {
       m.rotation.y = t * (e.i ? -1.5 : 1.5);
     });
 
-    while (this.wellMeshes.length < game.wells.length * 3) {
+    const wells = this.big ? game.wells.filter((w) => this.near(w)) : game.wells;
+    while (this.wellMeshes.length < wells.length * 3) {
       const m = new THREE.Mesh(this.geo.well, new THREE.MeshBasicMaterial({ color: COLORS.well, transparent: true, opacity: 0.6 }));
       m.rotation.x = Math.PI / 2;
       this.scene.add(m);
       this.wellMeshes.push(m);
     }
     this.wellMeshes.forEach((m, k) => {
-      const w = game.wells[Math.floor(k / 3)];
+      const w = wells[Math.floor(k / 3)];
       m.visible = !!w;
       if (!w) return;
       const f = (t * 0.8 + (k % 3) / 3) % 1;
@@ -967,7 +1079,8 @@ export class Renderer3D {
       ((m as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.2 + f * 0.6;
     });
 
-    while (this.arrowMeshes.length < game.arrows.length) {
+    const arrows = this.big ? game.arrows.filter((a) => this.near(a.pos)) : game.arrows;
+    while (this.arrowMeshes.length < arrows.length) {
       const shape = new THREE.Shape();
       shape.moveTo(0, 0.35);
       shape.lineTo(0.28, -0.05);
@@ -983,7 +1096,7 @@ export class Renderer3D {
       this.arrowMeshes.push(m);
     }
     this.arrowMeshes.forEach((m, k) => {
-      const a = game.arrows[k];
+      const a = arrows[k];
       m.visible = !!a;
       if (!a) return;
       m.position.set(wx(a.pos.x), 0.04, wz(a.pos.y));
@@ -1064,8 +1177,11 @@ export class Renderer3D {
     let back = 15 * Math.min(1.9, fit * 0.95 + 0.05);
     const head = game.players.find((p) => p.alive)?.body[0] ?? game.p0.body[0];
     const k = 1 - Math.pow(0.04, dt / 1000);
-    let tx = head ? wx(head.x) * 0.3 : 0;
-    let tz = head ? wz(head.y) * 0.3 : 0;
+    // Small arenas lean a little toward the head; big boards follow it, looking slightly ahead.
+    const follow = this.big ? 1 : 0.3;
+    const lead = this.big && head ? DIRS[game.p0.dir] : { x: 0, y: 0 };
+    let tx = head ? wx(head.x + lead.x * 2) * follow : 0;
+    let tz = head ? wz(head.y + lead.y * 2) * follow : 0;
     const len = game.p0.body.length;
     height += Math.min(6, len * 0.08);
     back += Math.min(4, len * 0.05);
@@ -1093,6 +1209,12 @@ export class Renderer3D {
       this.cam.position.y += (Math.random() - 0.5) * this.shake;
     }
     this.cam.lookAt(this.target.x, 0, this.target.z);
+    if (this.big) {
+      // The shadow camera only covers +-15 cells, so the key light travels with the view.
+      this.keyLight.position.set(this.target.x + 8, 22, this.target.z + 10);
+      this.keyLight.target.position.set(this.target.x, 0, this.target.z);
+      this.keyLight.target.updateMatrixWorld();
+    }
   }
 
   private project(x: number, y: number, z: number): { x: number; y: number; visible: boolean } {
@@ -1136,6 +1258,34 @@ export class Renderer3D {
       el.style.transform = `translate(${s.x}px, ${s.y}px) translate(-50%, -50%)`;
     });
   }
+}
+
+/** Glowing grid lines for the floor: `cells` squares per tile, repeated `repeat` times. */
+function gridTexture(cells: number, repeat: number): THREE.CanvasTexture {
+  const grid = document.createElement('canvas');
+  grid.width = grid.height = 512;
+  const g2 = grid.getContext('2d')!;
+  g2.fillStyle = '#000';
+  g2.fillRect(0, 0, 512, 512);
+  g2.strokeStyle = COLORS.grid;
+  g2.lineWidth = 2;
+  for (let i = 0; i <= cells; i++) {
+    const p = (i / cells) * 512;
+    g2.beginPath();
+    g2.moveTo(p, 0);
+    g2.lineTo(p, 512);
+    g2.moveTo(0, p);
+    g2.lineTo(512, p);
+    g2.stroke();
+  }
+  const tex = new THREE.CanvasTexture(grid);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  if (repeat !== 1) {
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(repeat, repeat);
+    tex.anisotropy = 4;
+  }
+  return tex;
 }
 
 /** Is WebGL usable here? */

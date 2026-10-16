@@ -29,7 +29,7 @@ export interface Replay {
   inputs: { f: number; i: Input }[];
 }
 
-const MODES: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'versus', 'custom'];
+const MODES: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'versus', 'custom', 'endless'];
 const CLASSES: SnakeClass[] = ['racer', 'viper', 'cobra', 'python'];
 const DIR_CODE: Record<Dir, string> = { up: 'U', down: 'D', left: 'L', right: 'R' };
 const CODE_DIR: Record<string, Dir> = { U: 'up', D: 'down', L: 'left', R: 'right' };
