@@ -105,6 +105,17 @@ export class Sound {
           this.noise(0.25, 0.25, 3000, 400);
           this.tone(220, 0.18, 'square', 0.15, 110);
           break;
+        case 'hex':
+          // A hiss, then a falling curse.
+          this.noise(0.3, 0.22, 6000, 2500);
+          this.tone(880, 0.3, 'sawtooth', 0.12, 330, 0.05);
+          break;
+        case 'hexed':
+          if (e.on) {
+            this.tone(330, 0.35, 'triangle', 0.18, 470);
+            this.tone(470, 0.35, 'triangle', 0.14, 330, 0.12);
+          } else this.tone(500, 0.15, 'sine', 0.12, 900);
+          break;
         case 'mouse':
           this.tone(1400, 0.05, 'square', 0.15);
           this.tone(1800, 0.06, 'square', 0.15, undefined, 0.06);

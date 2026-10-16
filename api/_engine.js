@@ -933,7 +933,8 @@ var base = {
 	rhythm: false,
 	zen: false,
 	arena: "box",
-	world: 0
+	world: 0,
+	hex: false
 };
 var MODES$1 = {
 	classic: {
@@ -989,8 +990,9 @@ var MODES$1 = {
 		...base,
 		id: "versus",
 		name: "Versus",
-		blurb: "Two players, one screen. Best of three.",
-		players: 2
+		blurb: "Two snakes, best of three. Space hexes your rival.",
+		players: 2,
+		hex: true
 	},
 	endless: {
 		...base,
@@ -1139,6 +1141,14 @@ var MUTATION_LIST = defs.map((d) => d.id);
 //#region src/game/engine.ts
 var SHED_WALL_MS = 15e3;
 var SHED_COOLDOWN_MS = 2500;
+/** Versus Hex: the shed key flips the opponent's controls instead of shedding. */
+var HEX_COOLDOWN_MS = 8e3;
+var HEX_SUDDEN_DEATH_COOLDOWN_MS = 5e3;
+var HEX_MS = 2500;
+/** After a hex wears off the victim can't be hexed again for this long. */
+var HEX_IMMUNE_MS = 3e3;
+/** No hexes in the opening seconds of a round. */
+var HEX_GRACE_MS = 3e3;
 var COMBO_WINDOW_MS = 2e3;
 var EFFECT_MS = {
 	phase: 6e3,
@@ -1231,7 +1241,11 @@ function newPlayer(id, cls) {
 		foods: 0,
 		armour: 0,
 		lastTurnTime: -Infinity,
-		rattleCooldown: 0
+		rattleCooldown: 0,
+		hexWarn: 0,
+		hexed: 0,
+		hexImmune: 0,
+		hexes: 0
 	};
 }
 var Game = class Game {
@@ -1424,13 +1438,25 @@ var Game = class Game {
 		return this.mode.rhythm ? 1 + Math.min(this.beatStreak, 12) / 4 : 1;
 	}
 	get shedMinLength() {
+		if (this.mode.hex) return 6;
 		return this.has("quickmolt") ? 4 : 6;
 	}
 	get shedCooldownMax() {
+		if (this.mode.hex) return this.collapseActive ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
 		return this.has("quickmolt") ? SHED_COOLDOWN_MS / 2 : SHED_COOLDOWN_MS;
 	}
 	canShedP(p) {
+		if (this.mode.hex) return this.canHexP(p);
 		return this.mode.abilities && p.alive && p.shedCooldown <= 0 && p.body.length >= this.shedMinLength;
+	}
+	/** The opponent a hex from `p` would hit, if it can be hexed right now. */
+	hexTarget(p) {
+		const o = this.players.find((q) => q !== p && q.alive);
+		if (!o || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) return null;
+		return o;
+	}
+	canHexP(p) {
+		return this.mode.hex && p.alive && this.time >= HEX_GRACE_MS && p.shedCooldown <= 0 && p.body.length >= 6 && this.hexTarget(p) !== null;
 	}
 	abilityLive(p) {
 		return this.mode.classAbility && p.alive && this.status === "playing" && !this.banner;
@@ -1537,7 +1563,7 @@ var Game = class Game {
 		if (this.status !== "playing") return;
 		const p = this.players[pid];
 		if (!p?.alive) return;
-		if (this.modifiers.has("mirror")) dir = OPPOSITE[dir];
+		if (this.modifiers.has("mirror") !== p.hexed > 0) dir = OPPOSITE[dir];
 		const last = p.queue.length ? p.queue[p.queue.length - 1] : p.iceBuffer ?? p.dir;
 		if (dir === last || dir === OPPOSITE[last] || p.queue.length >= 3) return;
 		p.queue.push(dir);
@@ -1593,6 +1619,7 @@ var Game = class Game {
 				type: "dash",
 				cells: [from, ...cells]
 			});
+			if (this.world && p.id === 0) this.syncBiome();
 		} else if (p.cls === "cobra") {
 			const h = p.body[0];
 			this.projectiles.push({
@@ -1605,6 +1632,7 @@ var Game = class Game {
 		}
 	}
 	shed(pid = 0) {
+		if (this.mode.hex) return this.hex(pid);
 		const p = this.players[pid];
 		if (!p || this.status !== "playing" || this.banner || !this.canShedP(p)) return false;
 		const keep = Math.max(3, Math.ceil(p.body.length / 2));
@@ -1637,6 +1665,47 @@ var Game = class Game {
 		}
 		this.checkCoil(p);
 		return true;
+	}
+	/** Versus: pay tail segments to flip the opponent's controls for a while. */
+	hex(pid = 0) {
+		const p = this.players[pid];
+		if (!p || this.status !== "playing" || this.banner || !this.canHexP(p)) return false;
+		const target = this.hexTarget(p);
+		const cells = p.body.splice(p.body.length - 2, 2);
+		p.prevBody = p.prevBody.slice(0, p.body.length);
+		p.shedCooldown = this.shedCooldownMax;
+		p.hexes++;
+		target.hexWarn = 400;
+		this.events.push({
+			type: "hex",
+			cells,
+			player: p.id,
+			target: target.id
+		});
+		return true;
+	}
+	tickHex(p, dt) {
+		if (p.hexWarn > 0) {
+			p.hexWarn = Math.max(0, p.hexWarn - dt);
+			if (p.hexWarn === 0) {
+				p.hexed = HEX_MS;
+				this.events.push({
+					type: "hexed",
+					player: p.id,
+					on: true
+				});
+			}
+		} else if (p.hexed > 0) {
+			p.hexed = Math.max(0, p.hexed - dt);
+			if (p.hexed === 0) {
+				p.hexImmune = HEX_IMMUNE_MS;
+				this.events.push({
+					type: "hexed",
+					player: p.id,
+					on: false
+				});
+			}
+		} else p.hexImmune = Math.max(0, p.hexImmune - dt);
 	}
 	chooseMutation(i) {
 		if (this.status !== "draft" || !this.draftOptions) return;
@@ -1707,6 +1776,7 @@ var Game = class Game {
 			}
 			p.shedCooldown = Math.max(0, p.shedCooldown - dt);
 			p.rattleCooldown = Math.max(0, p.rattleCooldown - dt);
+			this.tickHex(p, dt);
 			const def = CLASSES$1[p.cls];
 			const active = this.isSurging(p) || this.isHunkering(p);
 			if (active) p.meter = Math.max(0, p.meter - dt * def.cost * (this.has("adrenaline") ? .6 : 1));

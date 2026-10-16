@@ -46,16 +46,17 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 | Action | Keyboard | Touch |
 | --- | --- | --- |
 | Turn | Arrows / WASD | Swipe anywhere (optional D-pad: `set touch dpad`) |
-| Shed | Space | Two-finger tap or **shed** |
+| Shed (Hex in versus) | Space | Two-finger tap or **shed** |
 | Ability | Shift / E | Press and hold, double-tap, or the ability button |
 | Pause | P / Esc | `\|\|` |
-| Local versus | P1: WASD, Q shed, E ability · P2: Arrows, / shed, . ability | Each player swipes on their own half |
+| Local versus | P1: WASD, Q hex, E ability · P2: Arrows, / hex, . ability | Each player swipes on their own half |
 | Gamepad | D-pad/stick turn, A shed, B/RB/RT ability, Start pause (two pads = two players) | |
 
 ## Mechanics in brief
 
 - **Coil:** close a loop with your body (your shed skin counts) and everything inside is captured.
 - **Shed:** drop half your tail as a 15-second wall.
+- **Hex (versus only):** in versus the shed key casts Hex instead. It costs 2 tail segments and needs a length of 6. Your opponent flashes for 0.4 s, then their controls are flipped for 2.5 s. Cooldown 8 s (5 s in sudden death), no hexes in the first 3 s of a round, and a hexed snake is immune for 3 s afterwards.
 - **Combos:** up to x4, and length raises your multiplier.
 - **Arcade:** draft a mutation (from 20) after each level. Every 5th level is a boss (Serpent King / Swarm Queen). From level 6, twists appear: ice, darkness, gravity wells, arrow tiles, mirror and ripening. You get one rewind per run.
 - **Snake types:** Racer (Surge), Viper (Dash), Cobra (Spit) and Python (Hunker). The last three unlock through achievements.
@@ -76,7 +77,7 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 
 - **Matchmaking:** `api/room.js` only swaps the two connection offers. Rooms expire after 10 minutes and are deleted once connected.
 - **Netcode:** deterministic **lockstep**. Both players run the same simulation from the same seed and send only their key presses. Input delay is set from the measured ping (3–12 frames). Checksums every 30 frames detect any drift.
-- **Format:** best of three, with sudden death after 90 seconds. Each player brings their own snake type.
+- **Format:** best of three, with sudden death after 90 seconds. Each player brings their own snake type. Space casts Hex on your opponent.
 - **Privacy:** like any peer-to-peer game, each player's IP address is visible to the other.
 - **Relay:** `/api/ice` hands out TURN relay credentials (Cloudflare or any TURN provider) so players on strict networks can still connect. **Setup steps are in [docs/ONLINE_SETUP.md](docs/ONLINE_SETUP.md).**
 

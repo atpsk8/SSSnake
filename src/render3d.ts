@@ -39,6 +39,7 @@ const COLORS = {
   well: 0xa78bfa,
   arrow: 0x2ee6b8,
   spit: 0x9dff6a,
+  hex: 0xa66bff,
   power: { phase: 0xc4a7ff, slowmo: 0x6ab8ff, magnet: 0xff8a3d, shrink: 0x9dff6a } as Record<string, number>,
 };
 
@@ -567,6 +568,23 @@ export class Renderer3D {
         case 'cut':
           this.burst(e.cells, COLORS.p1, 5);
           break;
+        case 'hex': {
+          this.burst(e.cells, e.player === 1 ? COLORS.p2 : this.p1Color(), 6, 2, 1.5);
+          if (e.cells.length) this.popup('HEX!', e.cells[0], hex(COLORS.hex));
+          const at = game.players[e.target]?.body[0];
+          if (at) this.shock(at, 2.5, COLORS.hex, 500);
+          break;
+        }
+        case 'hexed': {
+          const at = game.players[e.player]?.body[0];
+          if (!at) break;
+          if (e.on) {
+            this.burst([at], COLORS.hex, 18, 3);
+            this.popup('HEXED', { x: at.x, y: at.y - 1 }, hex(COLORS.hex), true);
+            this.addShake(0.3);
+          } else this.shock(at, 1.4, COLORS.hex, 400);
+          break;
+        }
         case 'mouse':
           this.burst([e.pos], e.drone ? COLORS.drone : COLORS.mouse, 14);
           this.popup(`+${e.points}`, e.pos);
@@ -695,8 +713,15 @@ export class Renderer3D {
       const color = i === 1 ? COLORS.p2 : this.p1Color();
       const phase = !!pl.effects.phase && pl.alive;
       const ghostSkin = i === 0 && this.skin === 'ghost';
+      const hexed = pl.alive && pl.hexed > 0;
+      const hexWarn = pl.alive && pl.hexWarn > 0;
+      if (hexWarn || hexed) {
+        // Violet aura: a fast blink while the hex is incoming, a slow throb while it lasts.
+        const pulse = hexWarn ? (Math.sin(t * 40) > 0 ? 0.45 : 0.1) : 0.25 + 0.1 * Math.sin(t * 6);
+        this.snake(pts, COLORS.hex, 0.5, { opacity: pulse, glow: 0.6 });
+      }
       this.snake(pts, color, 0.34, {
-        opacity: pl.alive ? (phase ? 0.4 + 0.15 * Math.sin(t * 8) : 1) : 0.35,
+        opacity: pl.alive ? (phase ? 0.4 + 0.15 * Math.sin(t * 8) : hexed ? 0.75 + 0.2 * Math.sin(t * 10) : 1) : 0.35,
         wire: ghostSkin,
         metal: i === 0 && this.skin === 'gold',
         glow: pl.alive ? 0.22 : 0.05,

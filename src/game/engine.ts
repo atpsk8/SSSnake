@@ -40,6 +40,18 @@ import {
 export const SHED_WALL_MS = 15000;
 export const SHED_COOLDOWN_MS = 2500;
 export const SHED_MIN_LENGTH = 6;
+/** Versus Hex: the shed key flips the opponent's controls instead of shedding. */
+export const HEX_COOLDOWN_MS = 8000;
+const HEX_SUDDEN_DEATH_COOLDOWN_MS = 5000;
+export const HEX_COST = 2;
+export const HEX_MIN_LENGTH = 6;
+/** The victim flashes this long before the hex lands, so it can be read. */
+export const HEX_WARN_MS = 400;
+export const HEX_MS = 2500;
+/** After a hex wears off the victim can't be hexed again for this long. */
+export const HEX_IMMUNE_MS = 3000;
+/** No hexes in the opening seconds of a round. */
+const HEX_GRACE_MS = 3000;
 export const COMBO_WINDOW_MS = 2000;
 export const MAX_COMBO = 4;
 export const EFFECT_MS: Record<EffectKind, number> = { phase: 6000, slowmo: 5000, magnet: 8000 };
@@ -99,6 +111,11 @@ export interface Player {
   armour: number;
   lastTurnTime: number;
   rattleCooldown: number;
+  /** Versus Hex timers (ms): warning before it lands, active (controls flipped), immunity after. */
+  hexWarn: number;
+  hexed: number;
+  hexImmune: number;
+  hexes: number;
 }
 
 export interface Boss {
@@ -214,6 +231,10 @@ function newPlayer(id: number, cls: SnakeClass): Player {
     armour: 0,
     lastTurnTime: -Infinity,
     rattleCooldown: 0,
+    hexWarn: 0,
+    hexed: 0,
+    hexImmune: 0,
+    hexes: 0,
   };
 }
 
@@ -434,16 +455,38 @@ export class Game {
     return this.mode.rhythm ? 1 + Math.min(this.beatStreak, 12) / 4 : 1;
   }
 
+  // The shed key, its cooldown and its meter belong to Hex in versus, so these answer for it there.
   get shedMinLength(): number {
+    if (this.mode.hex) return HEX_MIN_LENGTH;
     return this.has('quickmolt') ? 4 : SHED_MIN_LENGTH;
   }
 
   get shedCooldownMax(): number {
+    if (this.mode.hex) return this.collapseActive ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
     return this.has('quickmolt') ? SHED_COOLDOWN_MS / 2 : SHED_COOLDOWN_MS;
   }
 
   canShedP(p: Player): boolean {
+    if (this.mode.hex) return this.canHexP(p);
     return this.mode.abilities && p.alive && p.shedCooldown <= 0 && p.body.length >= this.shedMinLength;
+  }
+
+  /** The opponent a hex from `p` would hit, if it can be hexed right now. */
+  hexTarget(p: Player): Player | null {
+    const o = this.players.find((q) => q !== p && q.alive);
+    if (!o || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) return null;
+    return o;
+  }
+
+  canHexP(p: Player): boolean {
+    return (
+      this.mode.hex &&
+      p.alive &&
+      this.time >= HEX_GRACE_MS &&
+      p.shedCooldown <= 0 &&
+      p.body.length >= HEX_MIN_LENGTH &&
+      this.hexTarget(p) !== null
+    );
   }
 
   private abilityLive(p: Player): boolean {
@@ -556,7 +599,7 @@ export class Game {
     if (this.status !== 'playing') return;
     const p = this.players[pid];
     if (!p?.alive) return;
-    if (this.modifiers.has('mirror')) dir = OPPOSITE[dir];
+    if (this.modifiers.has('mirror') !== p.hexed > 0) dir = OPPOSITE[dir];
     const last = p.queue.length ? p.queue[p.queue.length - 1] : (p.iceBuffer ?? p.dir);
     if (dir === last || dir === OPPOSITE[last] || p.queue.length >= 3) return;
     p.queue.push(dir);
@@ -615,6 +658,7 @@ export class Game {
   }
 
   shed(pid = 0): boolean {
+    if (this.mode.hex) return this.hex(pid);
     const p = this.players[pid];
     if (!p || this.status !== 'playing' || this.banner || !this.canShedP(p)) return false;
     const keep = Math.max(3, Math.ceil(p.body.length / 2));
@@ -639,6 +683,36 @@ export class Game {
     }
     this.checkCoil(p);
     return true;
+  }
+
+  /** Versus: pay tail segments to flip the opponent's controls for a while. */
+  hex(pid = 0): boolean {
+    const p = this.players[pid];
+    if (!p || this.status !== 'playing' || this.banner || !this.canHexP(p)) return false;
+    const target = this.hexTarget(p)!;
+    const cells = p.body.splice(p.body.length - HEX_COST, HEX_COST);
+    p.prevBody = p.prevBody.slice(0, p.body.length);
+    p.shedCooldown = this.shedCooldownMax;
+    p.hexes++;
+    target.hexWarn = HEX_WARN_MS;
+    this.events.push({ type: 'hex', cells, player: p.id, target: target.id });
+    return true;
+  }
+
+  private tickHex(p: Player, dt: number) {
+    if (p.hexWarn > 0) {
+      p.hexWarn = Math.max(0, p.hexWarn - dt);
+      if (p.hexWarn === 0) {
+        p.hexed = HEX_MS;
+        this.events.push({ type: 'hexed', player: p.id, on: true });
+      }
+    } else if (p.hexed > 0) {
+      p.hexed = Math.max(0, p.hexed - dt);
+      if (p.hexed === 0) {
+        p.hexImmune = HEX_IMMUNE_MS;
+        this.events.push({ type: 'hexed', player: p.id, on: false });
+      }
+    } else p.hexImmune = Math.max(0, p.hexImmune - dt);
   }
 
   chooseMutation(i: number) {
@@ -713,6 +787,7 @@ export class Game {
       }
       p.shedCooldown = Math.max(0, p.shedCooldown - dt);
       p.rattleCooldown = Math.max(0, p.rattleCooldown - dt);
+      this.tickHex(p, dt);
       const def = CLASSES[p.cls];
       const active = this.isSurging(p) || this.isHunkering(p);
       if (active) p.meter = Math.max(0, p.meter - dt * def.cost * (this.has('adrenaline') ? 0.6 : 1));

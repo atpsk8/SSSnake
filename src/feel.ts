@@ -9,6 +9,8 @@ const PATTERNS: Partial<Record<GameEvent['type'], number | number[]>> = {
   combo: 14,
   power: 25,
   shed: 30,
+  hex: 30,
+  hexed: 45,
   coil: [20, 40, 35],
   mouse: 10,
   rivalDie: [20, 30, 40],

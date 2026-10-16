@@ -124,6 +124,10 @@ export type GameEvent =
   | { type: 'power'; pos: Vec; kind: PowerKind; player: number }
   | { type: 'shrink'; cells: Vec[] }
   | { type: 'shed'; cells: Vec[]; player: number }
+  /** Versus: `player` cast a hex on `target`, paying `cells` from its tail. */
+  | { type: 'hex'; cells: Vec[]; player: number; target: number }
+  /** The hex lands (after its warning) or wears off. */
+  | { type: 'hexed'; player: number; on: boolean }
   | { type: 'cut'; cells: Vec[] }
   | { type: 'mouse'; pos: Vec; points: number; drone: boolean }
   | { type: 'portal'; from: Vec; to: Vec }

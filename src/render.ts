@@ -182,6 +182,11 @@ export class Renderer {
     return id === 1 ? this.palette.alt : this.palette.fg;
   }
 
+  /** Hex effects: violet on colour themes, the player's own colour on monochrome ones. */
+  private hexColor(id: number): string {
+    return this.soft || this.theme.id === 'terminal' ? mix(this.playerColor(id), '#b26bff', 0.65) : this.playerColor(id);
+  }
+
   pickupColor(kind: PickupKind): string {
     const p = this.palette;
     if (kind === 'rot' || kind === 'bit') return p.dim;
@@ -261,6 +266,22 @@ export class Renderer {
         case 'cut':
           this.burst(e.cells, p.dim, 3, 3);
           break;
+        case 'hex': {
+          this.burst(e.cells, this.playerColor(e.player), 3, 3);
+          if (e.cells.length) this.popup(caps('HEX!'), e.cells[0], this.playerColor(e.player));
+          const at = game.players[e.target]?.body[0];
+          if (at) this.ring(at, 2.5, this.hexColor(e.target), 400);
+          break;
+        }
+        case 'hexed': {
+          const at = game.players[e.player]?.body[0];
+          if (!at) break;
+          if (e.on) {
+            this.popup(caps('HEXED'), { x: at.x, y: at.y - 1 }, this.hexColor(e.player), 0.95);
+            this.addShake(3);
+          } else this.ring(at, 1.5, this.playerColor(e.player), 400);
+          break;
+        }
         case 'mouse':
           this.burst([e.pos], p.fg, 6);
           this.popup(`+${e.points}`, e.pos);
@@ -1535,6 +1556,9 @@ export class Renderer {
     const h = pts[0];
     let alphaMul = 1;
     if (phase && !dead && phase < 1500) alphaMul = 0.6 + this.pulse(500) * 0.4;
+    const hexed = pl.hexed > 0 && !dead;
+    const hexWarn = pl.hexWarn > 0 && !dead;
+    if (hexed) alphaMul *= 0.6 + this.pulse(300) * 0.4;
 
     if (this.soft) {
       const a = (dead ? 0.4 : 1) * alphaMul;
@@ -1565,7 +1589,22 @@ export class Renderer {
       }
       const headColor = pl.id === 0 && this.skin === 'gold' ? p.bright : color;
       this.block(h.x, h.y, headColor, 'solid', dead ? 0.5 : 1);
-      this.glyph(dead ? 'x' : ARROW_GLYPH[pl.dir], h.x, h.y, p.bg, 0.8);
+      this.glyph(dead ? 'x' : hexed ? '?' : ARROW_GLYPH[pl.dir], h.x, h.y, p.bg, 0.8);
+    }
+
+    if (hexWarn || hexed) {
+      const hc = this.hexColor(pl.id);
+      // The warning blinks fast; the hex itself swirls slowly around the head.
+      const a = hexWarn ? (this.pulse(120) > 0.5 ? 1 : 0.2) : 0.8;
+      if (this.soft) {
+        this.ctx.globalAlpha = a;
+        this.circle(h.x, h.y, hexWarn ? 0.75 : 0.6 + this.pulse(400) * 0.12, undefined, hc, 2.5);
+        this.ctx.globalAlpha = 1;
+        if (hexed) this.softLabel('hexed', h.x, h.y + 0.95, hc, 0.45);
+      } else {
+        this.block(h.x, h.y, hc, 'outline', a);
+        if (hexed) this.glyph('HEX', h.x, h.y + 0.95, hc, 0.5);
+      }
     }
 
     if (game.isSurging(pl) && Math.random() < 0.35 && this.bits.length < MAX_BITS) {

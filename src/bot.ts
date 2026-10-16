@@ -1,4 +1,4 @@
-import type { Game, Player } from './game/engine';
+import { HEX_COST, type Game, type Player } from './game/engine';
 import { Rng } from './game/rng';
 import { DIRS, DIR_LIST, OPPOSITE, add, manhattan, type Dir, type Vec } from './game/types';
 import type { Input } from './replay';
@@ -9,6 +9,9 @@ export type Personality = 'hunter' | 'collector' | 'trickster';
 const REACTION_MS: Record<Difficulty, number> = { easy: 240, normal: 120, hard: 40 };
 const NOISE: Record<Difficulty, number> = { easy: 3.5, normal: 1.2, hard: 0.15 };
 const BLUNDER: Record<Difficulty, number> = { easy: 0.12, normal: 0.03, hard: 0 };
+/** Chance per decision to cast a hex when the moment is right, and to steer through one. */
+const HEX_EAGER: Record<Difficulty, number> = { easy: 0.15, normal: 0.35, hard: 0.6 };
+const HEX_COPE: Record<Difficulty, number> = { easy: 0, normal: 0.6, hard: 1 };
 
 /**
  * CPU opponent for Versus. Each decision scores the possible moves: deadly moves are out,
@@ -69,10 +72,18 @@ export class Bot {
       const opts = DIR_LIST.filter((d) => d !== OPPOSITE[facing]);
       best = { d: this.rng.pick(opts), score: 0 };
     }
-    if (best && best.d !== facing) out.push({ p: this.pid, t: 'turn', d: best.d });
+    if (best && best.d !== facing) {
+      // Hexed controls are flipped; a good player presses the opposite key on purpose.
+      const flip = me.hexed > 0 && this.rng.next() < HEX_COPE[this.difficulty];
+      out.push({ p: this.pid, t: 'turn', d: flip ? OPPOSITE[best.d] : best.d });
+    }
 
-    // Shed to wall off a chasing opponent (trickster) or to escape a tight spot.
-    if (opp && g.canShedP(me)) {
+    if (g.mode.hex) {
+      if (opp && g.canHexP(me) && this.hexMoment(g, me, opp) && this.rng.next() < HEX_EAGER[this.difficulty]) {
+        out.push({ p: this.pid, t: 'shed' });
+      }
+    } else if (opp && g.canShedP(me)) {
+      // Shed to wall off a chasing opponent (trickster) or to escape a tight spot.
       const tail = me.body[me.body.length - 1];
       const chasing = manhattan(opp.body[0], tail) <= 3;
       const cramped = best !== null && best.score < -1e5;
@@ -94,6 +105,23 @@ export class Bot {
       out.push({ p: this.pid, t: 'hold', on: wantSurge });
     }
     return out;
+  }
+
+  /** Hex when it hurts most: the opponent is about to hit something, racing us for food, or close by. */
+  private hexMoment(g: Game, me: Player, opp: Player): boolean {
+    const head = opp.body[0];
+    const blocked = this.blockedMap(g, opp);
+    const ahead1 = this.step(g, head, opp.dir);
+    const ahead2 = ahead1 && this.step(g, ahead1, opp.dir);
+    const tight = !ahead1 || !!blocked[g.ix(ahead1)] || !ahead2 || !!blocked[g.ix(ahead2)];
+    const food = g.pickups.filter((p) => p.kind !== 'rot');
+    const racing = food.some((f) => manhattan(f.pos, head) <= 3 && manhattan(f.pos, head) < manhattan(f.pos, me.body[0]));
+    // Up close, paying for a hex mustn't leave us the shorter snake in a head-on.
+    const close = manhattan(head, me.body[0]) <= 5 && me.body.length - HEX_COST > opp.body.length;
+    if (tight) return true;
+    // Otherwise only when we can afford the length: falling behind loses head-on fights.
+    if (me.body.length - HEX_COST < opp.body.length - 2) return false;
+    return this.personality === 'collector' ? racing : racing || close;
   }
 
   private target(g: Game, me: Player, opp: Player | undefined): Vec | null {

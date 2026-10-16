@@ -24,6 +24,8 @@ export interface ModeConfig {
   arena: ArenaId;
   /** Side of the generated Endless world; 0 = the standard 24x24 arena. */
   world: number;
+  /** Versus: the shed key casts a Hex on the opponent instead of shedding. */
+  hex: boolean;
 }
 
 const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
@@ -41,6 +43,7 @@ const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
   zen: false,
   arena: 'box',
   world: 0,
+  hex: false,
 };
 
 export const MODES: Record<ModeId, ModeConfig> = {
@@ -97,8 +100,9 @@ export const MODES: Record<ModeId, ModeConfig> = {
     ...base,
     id: 'versus',
     name: 'Versus',
-    blurb: 'Two players, one screen. Best of three.',
+    blurb: 'Two snakes, best of three. Space hexes your rival.',
     players: 2,
+    hex: true,
   },
   endless: {
     ...base,

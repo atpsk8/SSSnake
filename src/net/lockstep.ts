@@ -23,7 +23,8 @@ export type NetMsg =
   | { k: 'pong'; t: number }
   | { k: 'bye' };
 
-export const PROTOCOL_VERSION = 1;
+// 2: the shed key casts Hex in versus.
+export const PROTOCOL_VERSION = 2;
 
 /** Cheap FNV-1a fingerprint of the parts of the state that matter for desync detection. */
 export function hashGame(g: Game): number {
@@ -38,6 +39,10 @@ export function hashGame(g: Game): number {
     mix(p.score);
     mix(p.alive ? 1 : 0);
     mix(p.body.length);
+    mix(p.shedCooldown);
+    mix(p.hexWarn);
+    mix(p.hexed);
+    mix(p.hexImmune);
     for (const s of p.body) mix(s.x * 64 + s.y);
   }
   for (const pk of g.pickups) mix(pk.pos.x * 64 + pk.pos.y);

@@ -706,6 +706,9 @@ function updateHud(g: Game) {
   setWidth('abilityBar', p.meter);
   $('abilityMeter').classList.toggle('active', g.isSurging(p) || g.isHunkering(p));
   $('abilityMeter').classList.toggle('ready', !def.hold && p.meter >= def.cost);
+  // In versus the shed key casts Hex; the meter and button follow it.
+  setText('shedName', g.mode.hex ? 'HEX' : 'SHED');
+  setText('btnShed', g.mode.hex ? 'hex' : 'shed');
   const shedMin = g.shedMinLength;
   setWidth('shedBar', p.body.length >= shedMin ? 1 - p.shedCooldown / (g.shedCooldownMax || SHED_COOLDOWN_MS) : p.body.length / shedMin);
   const canShed = g.canShedP(p);

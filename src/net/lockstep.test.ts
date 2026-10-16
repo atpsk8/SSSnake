@@ -28,6 +28,8 @@ function simulate(opts: { seed: number; latency: [number, number]; ticks: number
   };
   const make = (me: 0 | 1) => {
     const g = new Game({ mode: 'versus', seed: opts.seed, classes: ['racer', 'viper'] });
+    // Long enough to hex (the shed key) from the start; identical on both peers.
+    for (const pl of g.players) pl.grow = 6;
     // Ordered channel: never deliver earlier than the previous message to the same peer.
     let last = 0;
     return new Lockstep(g, me, opts.delay, (msg) => {
@@ -76,6 +78,17 @@ describe('lockstep', () => {
       }
     });
   }
+
+  it('stays identical while players hex each other', () => {
+    let hexes = 0;
+    for (let seed = 1; seed <= 16; seed++) {
+      const [a, b] = simulate({ seed, latency: [40, 90], ticks: 2500, delay: 8 });
+      expect(a.desync || b.desync).toBe(false);
+      if (a.frame === b.frame) expect(hashGame(a.game)).toBe(hashGame(b.game));
+      hexes += a.game.players.reduce((n, p) => n + p.hexes, 0);
+    }
+    expect(hexes).toBeGreaterThan(0);
+  });
 
   it('reaches the same result on both sides when a round ends', () => {
     let finished = 0;

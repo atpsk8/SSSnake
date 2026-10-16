@@ -180,10 +180,10 @@ export function buildCommands(app: AppCtx): Command[] {
         if (args[0] === 'cpu' || args[0] === 'bot') {
           const d = (args[1] ?? 'normal').toLowerCase();
           if (!['easy', 'normal', 'hard'].includes(d)) return t.print('usage: versus cpu easy|normal|hard', 'err');
-          t.print(`you vs cpu (${d}). arrows/WASD to move, space shed, shift ability.`, 'dim');
+          t.print(`you vs cpu (${d}). arrows/WASD to move, space hex, shift ability.`, 'dim');
           return app.start('versus', { cpu: d as 'easy' | 'normal' | 'hard' });
         }
-        t.print('P1: WASD, Q shed, E ability   P2: arrows, / shed, . ability   (or: {versus cpu})', 'dim');
+        t.print('P1: WASD, Q hex, E ability   P2: arrows, / hex, . ability   (or: {versus cpu})', 'dim');
         app.start('versus');
       },
     },
@@ -433,6 +433,7 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('MECHANICS', 'title');
         t.print('  COIL   close a loop with your body (and shed skin): everything inside is captured');
         t.print('  SHED   drop half your tail as a wall for 15s. bosses fall for it');
+        t.print("  HEX    versus only: the shed key costs 2 tail segments and flips the other snake's controls for 2.5s (8s cooldown)");
         t.print('  COMBO  eat within 2s for up to x4. longer snakes score more');
         t.print('  arcade: clear levels, draft mutations, beat bosses every 5th level, 1 rewind per run');
       },
