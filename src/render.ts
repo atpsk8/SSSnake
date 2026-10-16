@@ -792,7 +792,7 @@ export class Renderer {
         break;
     }
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) if (game.solid[y * game.w + x]) this.wallCell(x, y, false, c);
+      for (let x = x0; x <= x1; x++) if (game.solid[y * game.w + x]) this.wallCell(x, y, game.inRing({ x, y }), c);
     }
   }
 
@@ -1088,10 +1088,10 @@ export class Renderer {
     if (game.collapseWarning) {
       const next = game.ring + 1;
       const a = 0.25 + this.pulse(900) * 0.45;
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          if (game.solid[y * W + x]) continue;
-          if (x < next || y < next || x >= W - next || y >= H - next) this.block(x, y, this.soft ? p.danger : p.fg, 'outline', a);
+      for (let y = 0; y < game.h; y++) {
+        for (let x = 0; x < game.w; x++) {
+          if (game.solid[y * game.w + x]) continue;
+          if (x < next || y < next || x >= game.w - next || y >= game.h - next) this.block(x, y, this.soft ? p.danger : p.fg, 'outline', a);
         }
       }
     }

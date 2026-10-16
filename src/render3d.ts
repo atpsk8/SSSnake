@@ -784,10 +784,10 @@ export class Renderer3D {
       const m = new THREE.Matrix4();
       let n = 0;
       let r = 0;
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          if (!solid[y * W + x]) continue;
-          const ring = x < game.ring || y < game.ring || x >= W - game.ring || y >= H - game.ring;
+      for (let y = 0; y < game.h; y++) {
+        for (let x = 0; x < game.w; x++) {
+          if (!solid[y * game.w + x]) continue;
+          const ring = game.inRing({ x, y });
           if (ring) {
             m.makeTranslation(wx(x), 0.25, wz(y));
             this.ringWalls.setMatrixAt(r++, m);
