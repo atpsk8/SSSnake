@@ -1231,6 +1231,35 @@ body.reduced-motion #app {
   opacity: 0.9;
 }
 
+:root[data-theme='arena'] {
+  --bg: #0a0814;
+  --fg: #e4e0ff;
+  --bright: #ffffff;
+  --dim: #8a84b3;
+  --faint: #1e1936;
+  --alt: #ff5a6e;
+  --glow: rgba(178, 107, 255, 0.35);
+  --font: 'Space Grotesk', system-ui, sans-serif;
+  --display: 'Space Grotesk', system-ui, sans-serif;
+  --base-size: 15px;
+  --radius: 12px;
+  --bar-bg: transparent;
+  --bar-fg: #ffffff;
+  --hover-bg: linear-gradient(90deg, #2ee6ff, #b26bff, #ff5a6e);
+  --hover-fg: #0a0814;
+  --win-border: rgba(178, 107, 255, 0.3);
+  --win-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+/* Versus arena: cyan on the left, coral on the right, meeting in violet. */
+:root[data-theme='arena'] body {
+  background:
+    radial-gradient(ellipse at 15% 20%, rgba(46, 230, 255, 0.12), transparent 55%),
+    radial-gradient(ellipse at 85% 80%, rgba(255, 90, 110, 0.12), transparent 55%),
+    radial-gradient(ellipse at center, #15102a 0%, #0a0814 75%) fixed;
+}
+
 :root[data-theme='neo'] {
   --bg: #0b0f1a;
   --fg: #dbe7ff;

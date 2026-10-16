@@ -77,7 +77,7 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 
 - **Matchmaking:** `api/room.js` only swaps the two connection offers. Rooms expire after 10 minutes and are deleted once connected.
 - **Netcode:** deterministic **lockstep**. Both players run the same simulation from the same seed and send only their key presses. Input delay is set from the measured ping (3–12 frames). Checksums every 30 frames detect any drift.
-- **Format:** best of three on a 48×48 board whose edges wrap around (the walls don't kill), with four food on the board at once. After 90 seconds sudden death starts: both snakes speed up every 10 seconds. Each player brings their own snake type. Space casts Hex on your opponent, and the hexed player's screen pulses purple until it wears off.
+- **Format:** best of three on a 48×48 board whose edges wrap around (the walls don't kill), with four food on the board at once. After 90 seconds sudden death starts: both snakes speed up every 10 seconds. Each player brings their own snake type. Space casts Hex on your opponent, and the hexed player's screen pulses purple until it wears off. Versus always uses its own dark neon arena look (cyan against coral); your chosen theme comes back when you leave.
 - **Privacy:** like any peer-to-peer game, each player's IP address is visible to the other.
 - **Relay:** `/api/ice` hands out TURN relay credentials (Cloudflare or any TURN provider) so players on strict networks can still connect. **Setup steps are in [docs/ONLINE_SETUP.md](docs/ONLINE_SETUP.md).**
 

@@ -21,7 +21,7 @@ import { OnlineMatch } from './net/online';
 import { NetError, hostRoom, joinRoom, netStatus, quickMatch, type PeerLink } from './net/peer';
 import { CLASS_UNLOCK, SKINS, evaluate, isUnlocked, type RunContext } from './progress';
 import { POWER_LABEL, Renderer } from './render';
-import { THEMES } from './themes';
+import { THEMES, type ThemeId } from './themes';
 import { challengeUrl, readChallengeFromHash, shareLink, type Challenge } from './share';
 import { decodeReplay, encodeReplay, gameFor, type Input } from './replay';
 import { Runner } from './runner';
@@ -147,10 +147,24 @@ function boardKey(mode: ModeId): string | null {
 
 // ---------------------------------------------------------------- settings
 
+/** Versus always plays in its own arena look; null means the player's chosen theme. */
+let themeOverride: ThemeId | null = null;
+const activeTheme = (): ThemeId => themeOverride ?? data.settings.theme;
+
+/** Switch the versus arena look on or off, keeping the player's own theme setting untouched. */
+function setThemeOverride(next: ThemeId | null) {
+  if (next === themeOverride) return;
+  themeOverride = next;
+  renderer.setTheme(activeTheme(), data.settings.palette);
+  document.documentElement.dataset.theme = activeTheme();
+  loadThemeFonts();
+  syncView();
+}
+
 function applySettings() {
   const s = data.settings;
-  renderer.setTheme(s.theme, s.palette);
-  document.documentElement.dataset.theme = s.theme;
+  renderer.setTheme(activeTheme(), s.palette);
+  document.documentElement.dataset.theme = activeTheme();
   loadThemeFonts();
   syncView();
   renderer.reducedMotion = s.reducedMotion;
@@ -181,7 +195,7 @@ function webglAvailable(): boolean {
 /** Pick the 2D or 3D view for the current theme/screen, loading three.js on first use. */
 function syncView() {
   const s = data.settings;
-  const want3d = s.theme === 'neo' && screen !== 'editor';
+  const want3d = activeTheme() === 'neo' && screen !== 'editor';
   if (want3d && view3d && view3d.quality !== s.quality) {
     view3d.dispose();
     view3d = null;
@@ -219,7 +233,7 @@ function syncView() {
 
 /** Canvas text needs the theme's fonts loaded; redraw the cached board once they are. */
 function loadThemeFonts() {
-  const t = THEMES[data.settings.theme];
+  const t = THEMES[activeTheme()];
   if (!document.fonts) return;
   const fams = [t.font, t.display].map((f) => `16px ${f}`);
   void Promise.all(fams.map((f) => document.fonts.load(f).catch(() => []))).then(() => renderer.invalidate());
@@ -271,6 +285,8 @@ function updatePrompt() {
 
 function show(next: Screen) {
   if (next !== 'play') $('hexGlow').classList.remove('on');
+  // The versus arena look lasts for the match (play, pause, results), not back at the terminal.
+  if (next === 'term' || next === 'editor') setThemeOverride(null);
   if (screen === 'editor' && next !== 'editor') {
     editor.close();
     document.body.classList.remove('editing');
@@ -319,6 +335,7 @@ let lastStart: { mode: ModeId; opts: StartOpts } = { mode: 'arcade', opts: {} };
 
 function applyModeClasses(g: Game) {
   const m = g.mode;
+  setThemeOverride(m.id === 'versus' ? 'arena' : null);
   document.body.dataset.mode = m.id;
   document.body.classList.toggle('no-abilities', !m.abilities);
   document.body.classList.toggle('no-class', !m.classAbility);

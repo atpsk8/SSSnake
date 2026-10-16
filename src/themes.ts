@@ -1,6 +1,6 @@
 import type { PaletteId } from './storage';
 
-export type ThemeId = 'neo' | 'terminal' | 'nokia' | 'gameboy' | 'paper' | 'minimal';
+export type ThemeId = 'neo' | 'terminal' | 'nokia' | 'gameboy' | 'paper' | 'minimal' | 'arena';
 
 /** Canvas colours. "fg" is the main ink, "bright" the strongest, "faint" the weakest. */
 export interface Palette {
@@ -197,6 +197,32 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
       lines: '#cbd9e6',
     }),
   },
+  // Versus only: a dark neon arena, cyan against coral, with violet hexes.
+  arena: {
+    id: 'arena',
+    name: 'arena',
+    desc: 'versus arena: neon cyan against hot coral',
+    family: 'soft',
+    font: '"Space Grotesk", system-ui, sans-serif',
+    display: '"Space Grotesk", system-ui, sans-serif',
+    gap: 0,
+    background: 'subtle',
+    wallGlyph: false,
+    pixelFood: false,
+    palette: () => ({
+      bg: '#0a0814',
+      fg: '#2ee6ff',
+      bright: '#f2f0ff',
+      dim: '#5b5680',
+      faint: '#17132a',
+      alt: '#ff5a6e',
+      accent: '#ffd23f',
+      gold: '#ffd23f',
+      danger: '#ff5a6e',
+      rival: '#b26bff',
+      lines: '#1e1936',
+    }),
+  },
   minimal: {
     id: 'minimal',
     name: 'minimal',
@@ -224,4 +250,5 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
   },
 };
 
+/** Themes a player can pick. 'arena' isn't one of them: versus always uses it. */
 export const THEME_ORDER: ThemeId[] = ['neo', 'terminal', 'nokia', 'gameboy', 'paper', 'minimal'];
