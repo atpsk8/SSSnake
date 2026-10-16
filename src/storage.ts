@@ -14,6 +14,8 @@ export interface Settings {
   crt: CrtLevel;
   deathcam: boolean;
   haptics: boolean;
+  /** Show the "what's in this level" pop-up when a level starts. */
+  intros: boolean;
   quality: 'high' | 'low';
   reducedMotion: boolean;
   sound: boolean;
@@ -66,6 +68,7 @@ function defaults(): SaveData {
       crt: 'soft',
       deathcam: true,
       haptics: true,
+      intros: true,
       quality: 'high',
       reducedMotion: reduced,
       sound: true,
@@ -104,6 +107,7 @@ function migrate(s: Settings): Settings {
   if (!['soft', 'full', 'off'].includes(s.crt)) s.crt = 'soft';
   if (typeof s.deathcam !== 'boolean') s.deathcam = true;
   if (typeof s.haptics !== 'boolean') s.haptics = true;
+  if (typeof s.intros !== 'boolean') s.intros = true;
   if (!['neo', 'terminal', 'nokia', 'gameboy', 'paper', 'minimal'].includes(s.theme)) s.theme = 'terminal';
   if (s.quality !== 'high' && s.quality !== 'low') s.quality = 'high';
   return s;

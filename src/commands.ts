@@ -82,6 +82,12 @@ export function buildCommands(app: AppCtx): Command[] {
         s().deathcam = b;
         break;
       }
+      case 'intros': {
+        const b = bool(v);
+        if (b === null) return t.print('usage: set intros on|off', 'err');
+        s().intros = b;
+        break;
+      }
       case 'motion':
         if (!['full', 'reduced'].includes(v)) return t.print('usage: set motion full|reduced', 'err');
         s().reducedMotion = v === 'reduced';
@@ -110,6 +116,7 @@ export function buildCommands(app: AppCtx): Command[] {
       ['quality', st.quality, 'set quality high|low  (3D neo theme: bloom, shadows)'],
       ['haptics', st.haptics ? 'on' : 'off', 'set haptics on|off  (phone vibration, controller rumble)'],
       ['deathcam', st.deathcam ? 'on' : 'off', 'set deathcam on|off  (instant replay when you die)'],
+      ['intros', st.intros ? 'on' : 'off', 'set intros on|off  (what\'s-in-this-level pop-up)'],
       ['motion', st.reducedMotion ? 'reduced' : 'full', 'set motion full|reduced'],
       ['touch', st.touch, 'set touch swipe|dpad'],
     ]);

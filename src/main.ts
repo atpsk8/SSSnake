@@ -22,14 +22,15 @@ import { HostRoom, NetError, joinRoom, netStatus, quickMatch, type PeerLink } fr
 import { CLASS_UNLOCK, SKINS, evaluate, isUnlocked, type RunContext } from './progress';
 import { POWER_LABEL, Renderer } from './render';
 import { THEMES, type ThemeId } from './themes';
+import { legendFor, levelIntro } from './legend';
 import { challengeUrl, readChallengeFromHash, shareLink, type Challenge } from './share';
 import { decodeReplay, encodeReplay, gameFor, type Input } from './replay';
 import { Runner } from './runner';
 import { addLocalScore, load, save, type SaveData, type SkinId } from './storage';
 import { Terminal } from './terminal';
 
-type Screen = 'term' | 'play' | 'pause' | 'over' | 'settings' | 'draft' | 'editor' | 'replay';
-const OVERLAYS: Screen[] = ['term', 'pause', 'over', 'settings', 'draft'];
+type Screen = 'term' | 'play' | 'pause' | 'over' | 'settings' | 'draft' | 'editor' | 'replay' | 'intro';
+const OVERLAYS: Screen[] = ['term', 'pause', 'over', 'settings', 'draft', 'intro'];
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -237,7 +238,10 @@ function loadThemeFonts() {
   const t = THEMES[activeTheme()];
   if (!document.fonts) return;
   const fams = [t.font, t.display].map((f) => `16px ${f}`);
-  void Promise.all(fams.map((f) => document.fonts.load(f).catch(() => []))).then(() => renderer.invalidate());
+  void Promise.all(fams.map((f) => document.fonts.load(f).catch(() => []))).then(() => {
+    renderer.invalidate();
+    legendKey = '';
+  });
 }
 
 function syncSettingsForm() {
@@ -786,6 +790,8 @@ function setWidth(id: string, frac: number) {
 }
 
 function updateHud(g: Game) {
+  updateLegend(g);
+  updateScoreboard(g);
   const me = online?.me ?? 0;
   const p = g.players[me];
   if (g.mode.id === 'versus') {
@@ -912,6 +918,7 @@ function step(now: number) {
   } else if (screen === 'replay' && playback) {
     tickPlayback(dt);
   } else if (game) {
+    if (screen === 'play' && game.status === 'playing' && needsIntro(game)) openIntro(game);
     if (screen === 'play') {
       if (cpuBot && runner) for (const i of cpuBot.think(game, dt)) runner.input(i);
       if (runner) runner.tick(dt);
@@ -936,6 +943,118 @@ function step(now: number) {
     attractTick(dt);
   }
 }
+
+// ---------------------------------------------------------------- side panels & level intro
+
+let legendKey = '';
+let legendGame: Game | null = null;
+let legendLevel = 0;
+
+/** Left panel: what everything on the board means, drawn with the board's own renderer. */
+function updateLegend(g: Game) {
+  const me = online?.me ?? 0;
+  const key = `${activeTheme()}|${data.settings.palette}|${me}|${g.level}|${g.ring > 0}`;
+  if (key === legendKey && legendGame === g && legendLevel === g.level) return;
+  legendKey = key;
+  legendGame = g;
+  legendLevel = g.level;
+  const list = $('legendList');
+  list.textContent = '';
+  for (const e of legendFor(g)) {
+    const li = document.createElement('li');
+    const icon = document.createElement('canvas');
+    renderer.drawIcon(e.icon, icon, 22, me);
+    const text = document.createElement('div');
+    text.innerHTML = `<strong>${esc(e.name)}</strong><span>${esc(e.desc)}</span>`;
+    li.append(icon, text);
+    list.append(li);
+  }
+}
+
+let boardHtml = '';
+const mmss = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms / 1000) % 60)).padStart(2, '0')}`;
+
+/** Right panel: the live score and, solo, this device's top scores; versus, every player. */
+function updateScoreboard(g: Game) {
+  const me = online?.me ?? 0;
+  let html: string;
+  if (g.mode.id === 'versus') {
+    const names = online?.names ?? (cpuBot ? ['you', 'cpu'] : g.players.map((_, i) => `P${i + 1}`));
+    const wins = online?.wins ?? versus.wins;
+    const need = online?.winsNeeded ?? 2;
+    const rows = g.players
+      .map((p, i) => {
+        const dots = '●'.repeat(wins[i] ?? 0) + '○'.repeat(Math.max(0, need - (wins[i] ?? 0)));
+        const name = online && i === me ? 'you' : (names[i] ?? `P${i + 1}`);
+        const cls = [online && i === me ? 'me' : '', p.alive ? '' : 'out'].join(' ').trim();
+        return `<li class="${cls}"><span class="swatch" style="background:${renderer.playerColor(i)}"></span><span>${esc(name)} <span class="dim">${dots}</span></span><span>${p.score}</span></li>`;
+      })
+      .join('');
+    html =
+      `<p class="board-sub">round ${online?.round ?? versus.round} · first to ${need}</p><ul class="board-list">${rows}</ul>` +
+      `<dl class="board-rows"><dt>time</dt><dd>${mmss(g.time)}</dd>${g.suddenDeath ? '<dt>sudden death</dt><dd>on</dd>' : ''}</dl>`;
+  } else {
+    const p = g.p0;
+    const best = Math.max(data.best[g.mode.id] ?? 0, p.score);
+    const rows: [string, string][] = [
+      ['length', String(p.body.length)],
+      ['best combo', p.maxCombo > 1 ? `x${p.maxCombo}` : '-'],
+      ['food', String(p.foods)],
+      ['time', mmss(g.time)],
+      ['best', best.toLocaleString()],
+    ];
+    if (g.mode.levels) rows.unshift(['level', String(g.level)]);
+    const key = boardKey(g.mode.id);
+    const top = key ? [...(data.boards[key] ?? [])] : [];
+    // Where this run would place right now.
+    const now = { name: 'you (now)', score: p.score, now: true };
+    const ranked = [...top.map((r) => ({ name: r.name, score: r.score, now: false })), now].sort((a, b) => b.score - a.score).slice(0, 8);
+    const list = ranked
+      .map((r, i) => `<li class="${r.now ? 'me' : ''}"><span>${i + 1}</span><span>${esc(r.name || 'guest')}</span><span>${r.score.toLocaleString()}</span></li>`)
+      .join('');
+    html =
+      `<div class="board-big">${p.score.toLocaleString()}</div>` +
+      `<dl class="board-rows">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` +
+      (key ? `<p class="board-sub">top scores (this device)</p><ul class="board-list">${list}</ul>` : '');
+  }
+  if (html === boardHtml) return;
+  boardHtml = html;
+  $('boardBody').innerHTML = html;
+}
+
+let introGame: Game | null = null;
+let introLevel = 0;
+
+/** A level is starting that the player hasn't been shown yet (local play only). */
+function needsIntro(g: Game): boolean {
+  if (online || playback || !data.settings.intros) return false;
+  if (g.mode.id === 'versus' && versus.round > 1) return false;
+  return !(introGame === g && introLevel === g.level);
+}
+
+function openIntro(g: Game) {
+  introGame = g;
+  introLevel = g.level;
+  const names = cpuBot ? ['you', cpuBot.label] : g.players.map((_, i) => `P${i + 1}`);
+  const info = levelIntro(g, { players: g.mode.id === 'versus' ? names : undefined, winsNeeded: 2 });
+  $('introTitle').textContent = info.title.toLowerCase();
+  $('introSub').textContent = info.subtitle;
+  $('introLines').innerHTML = info.lines.map((l) => `<li>${esc(l)}</li>`).join('');
+  $<HTMLInputElement>('introSkip').checked = false;
+  show('intro');
+}
+
+function closeIntro() {
+  if (screen !== 'intro') return;
+  if ($<HTMLInputElement>('introSkip').checked) {
+    data.settings.intros = false;
+    save(data);
+    toast('level intros off', 'turn them back on with set intros on.');
+  }
+  show('play');
+}
+
+$('introGo').addEventListener('click', closeIntro);
 
 // ---------------------------------------------------------------- music & feel
 
@@ -1330,7 +1449,8 @@ const inputHandlers: InputHandlers = {
     else if (game?.players[p]?.held) local({ p, t: 'hold', on: false });
   },
   pause: () => {
-    if (screen === 'play') openPause();
+    if (screen === 'intro') closeIntro();
+    else if (screen === 'play') openPause();
     else if (screen === 'pause') show('play');
     else if (screen === 'editor') toTerminal();
     else if (screen === 'settings') show(settingsReturn);

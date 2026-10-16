@@ -53,6 +53,18 @@
           </div>
         </section>
 
+        <section id="intro" class="overlay hidden" aria-labelledby="introTitle">
+          <div class="win small intro-win">
+            <div class="win-bar"><span id="introTitle">level</span></div>
+            <div class="win-body">
+              <p id="introSub" class="intro-sub"></p>
+              <ul id="introLines" class="intro-lines"></ul>
+              <button id="introGo" class="primary">[ let's go ] <kbd>enter</kbd></button>
+              <label class="intro-skip"><input id="introSkip" type="checkbox" /> don't show level intros</label>
+            </div>
+          </div>
+        </section>
+
         <section id="pause" class="overlay hidden">
           <div class="win small">
             <div class="win-bar"><span>paused</span></div>
@@ -202,6 +214,14 @@
         </div>
       </div>
     </div>
+    <aside id="legend" class="side-panel left" aria-label="Legend">
+      <h3 class="side-title">legend</h3>
+      <ul id="legendList" class="legend-list"></ul>
+    </aside>
+    <aside id="scoreboard" class="side-panel right" aria-label="Scoreboard">
+      <h3 class="side-title" id="boardTitle">scoreboard</h3>
+      <div id="boardBody"></div>
+    </aside>
     <div class="crt" aria-hidden="true"></div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
     <script type="module" src="/src/main.ts"></script>

@@ -646,7 +646,8 @@ body.editing #board {
 }
 
 .tl-big {
-  font-family: var(--display);
+  /* ASCII art only lines up in a fixed-width font, whatever the theme's display face. */
+  font-family: 'VT323', 'IBM Plex Mono', ui-monospace, Consolas, monospace;
   font-size: 22px;
   line-height: 1;
   color: var(--bright);
@@ -940,6 +941,178 @@ body.editing .editor-bar {
   .hud {
     gap: 2px 10px;
   }
+}
+
+/* ---------------------------------------------------------------- side panels (wide screens) */
+
+/* The legend sits left of the board and the scoreboard right of it, in the empty margins. */
+.side-panel {
+  position: fixed;
+  top: 64px;
+  bottom: 24px;
+  width: 230px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border: 1px solid var(--win-border);
+  border-radius: var(--radius);
+  box-shadow: var(--win-shadow);
+  font-size: 0.85em;
+  z-index: 3;
+}
+
+.side-panel.left {
+  right: calc(50% + 380px + 12px);
+}
+
+.side-panel.right {
+  left: calc(50% + 380px + 12px);
+}
+
+@media (min-width: 1300px) {
+  body.in-game:is([data-screen='play'], [data-screen='pause'], [data-screen='over'], [data-screen='draft'], [data-screen='intro']) .side-panel {
+    display: flex;
+  }
+}
+
+.side-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bright);
+}
+
+.legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.legend-list li {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.legend-list canvas {
+  border-radius: 4px;
+}
+
+.legend-list strong {
+  display: block;
+  color: var(--bright);
+}
+
+.legend-list span {
+  color: var(--dim);
+  line-height: 1.35;
+}
+
+.board-big {
+  font-family: var(--display);
+  font-size: 2em;
+  font-weight: 700;
+  color: var(--bright);
+  line-height: 1.1;
+}
+
+.board-rows {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.board-rows dt {
+  color: var(--dim);
+}
+
+.board-rows dd {
+  margin: 0;
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-sub {
+  margin: 6px 0 0;
+  font-size: 0.9em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-list li {
+  display: grid;
+  grid-template-columns: 2ch 1fr auto;
+  gap: 8px;
+  color: var(--fg);
+}
+
+.board-list li.me {
+  color: var(--bright);
+  font-weight: 700;
+}
+
+.board-list li.out {
+  opacity: 0.45;
+}
+
+.board-list .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------- level intro */
+
+.intro-win {
+  width: min(520px, 100%);
+}
+
+.intro-sub {
+  font-family: var(--display);
+  font-size: 1.15em;
+  color: var(--bright);
+}
+
+.intro-lines {
+  margin: 0;
+  padding-left: 1.1em;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  line-height: 1.4;
+}
+
+.intro-skip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--dim);
 }
 
 /* Versus: a soft violet pulse around the screen while you are hexed. */

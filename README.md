@@ -52,6 +52,13 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 | Local versus | P1: WASD, Q hex, E ability · P2: Arrows, / hex, . ability | Each player swipes on their own half |
 | Gamepad | D-pad/stick turn, A shed, B/RB/RT ability, Start pause (two pads = two players) | |
 
+## Play screen
+
+- **Legend (left):** what everything on the board means, drawn in the current theme and limited to what the mode or level can contain.
+- **Scoreboard (right):** your live score, length, combo, time and best, plus this device's top scores with where the current run would place. In versus it lists every player with their round wins.
+- **Level intro:** when a level starts, a pop-up explains it (goal, twists, hazards, bosses, your snake's ability). Click or press Enter to play. `set intros off` (or the checkbox) turns it off. Online matches skip it.
+- The side panels need a wide screen (about 1300px); on phones and small windows they're hidden.
+
 ## Mechanics in brief
 
 - **Walls never kill:** in every mode the edges wrap around and snakes pass straight through walls. You can still crash into snakes (your own body included), shed skin, mines, rivals and bosses.

@@ -2,6 +2,7 @@ import type { Game, Player } from './game/engine';
 import { DIRS, H, W, type Dir, type GameEvent, type PickupKind, type Vec } from './game/types';
 import { BIOMES, CHUNK, LANDMARK_NAME, type BiomeId } from './game/world';
 import type { PaletteId, SkinId } from './storage';
+import type { LegendIcon } from './legend';
 import { THEMES, type Palette, type ThemeDef, type ThemeId } from './themes';
 
 /**
@@ -181,6 +182,105 @@ export class Renderer {
   playerColor(id: number): string {
     const p = this.palette;
     return [p.fg, p.alt, p.p3 ?? p.gold, p.p4 ?? p.rival][id] ?? p.fg;
+  }
+
+  /**
+   * Draw one legend icon onto a small canvas, in the current theme, using the same drawing code
+   * as the board (each draw method gets a one-item stand-in for the game).
+   */
+  drawIcon(icon: LegendIcon, canvas: HTMLCanvasElement, cssSize: number, playerId = 0) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = this.dpr;
+    canvas.width = Math.round(cssSize * dpr);
+    canvas.height = Math.round(cssSize * dpr);
+    canvas.style.width = `${cssSize}px`;
+    canvas.style.height = `${cssSize}px`;
+    const saved = { ctx: this.ctx, cell: this.cell, view: this.view };
+    this.ctx = ctx;
+    this.cell = cssSize;
+    this.view = null;
+    this.lastFont = '';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = this.palette.bg;
+    ctx.fillRect(0, 0, cssSize, cssSize);
+    const p = this.palette;
+    const at: Vec = { x: 0, y: 0 };
+    const stub = (o: Record<string, unknown>) => ({ worldAlpha: 1, ripensAt: () => false, ...o }) as unknown as Game;
+    const pickup = (kind: PickupKind) => stub({ pickups: [{ id: 0, kind, pos: at, ttl: Infinity, maxTtl: Infinity, age: icon === 'rot' ? 30000 : 0 }] });
+    try {
+      switch (icon) {
+        case 'you':
+        case 'foe': {
+          const color = this.playerColor(icon === 'you' ? playerId : playerId === 1 ? 0 : 1);
+          if (this.soft) {
+            this.circle(0, 0, 0.4, color);
+            this.eyes(at, 'right', '#ffffff', '#1e2a2a', 0.17);
+          } else {
+            this.block(0, 0, color);
+            this.glyph('>', 0, 0, p.bg, 0.8);
+          }
+          break;
+        }
+        case 'food':
+        case 'bit':
+        case 'golden':
+        case 'rot':
+        case 'phase':
+        case 'slowmo':
+        case 'magnet':
+        case 'shrink':
+          this.drawPickups(pickup(icon));
+          break;
+        case 'mine':
+          this.drawMines(stub({ mines: [{ pos: at, offset: 0 }], mineLit: () => true, mineWarn: () => 0 }));
+          break;
+        case 'mouse':
+        case 'drone':
+          this.drawMice(stub({ mice: [{ id: 0, pos: at, prev: { x: -1, y: 0 }, ttl: Infinity, stunned: 0, drone: icon === 'drone' }] }));
+          break;
+        case 'rival':
+          this.drawRival(stub({ rival: { body: [at, { x: -1, y: 0 }], prevBody: [at, { x: -1, y: 0 }], dir: 'right', grow: 0, stunned: 0 } }));
+          break;
+        case 'boss':
+          if (this.soft) {
+            this.circle(0, 0, 0.42, p.danger);
+            this.softLabel('!', 0, 0, p.bg, 0.55);
+          } else this.inverse('B', 0, 0, p.bright);
+          break;
+        case 'wall':
+          this.wallCell(0, 0, false, ctx);
+          break;
+        case 'shed':
+          this.drawShedWalls(stub({ shedWalls: [{ pos: at, ttl: 15000, maxTtl: 15000, owner: playerId }] }));
+          break;
+        case 'portal':
+          this.drawPortals(stub({ arena: { portals: [[at, { x: 9, y: 9 }]] } }));
+          break;
+        case 'well':
+          this.drawWells(stub({ wells: [at] }));
+          break;
+        case 'arrow':
+          this.drawArrows(stub({ arrows: [{ pos: at, dir: 'right' }] }));
+          break;
+        case 'hex': {
+          const hc = this.hexColor(playerId === 0 ? 1 : 0);
+          if (this.soft) {
+            this.circle(0, 0, 0.38, undefined, hc, 2.5);
+            this.softLabel('?', 0, 0, hc, 0.55);
+          } else {
+            this.block(0, 0, hc, 'outline');
+            this.glyph('?', 0, 0, hc, 0.8);
+          }
+          break;
+        }
+      }
+    } finally {
+      this.ctx = saved.ctx;
+      this.cell = saved.cell;
+      this.view = saved.view;
+      this.lastFont = '';
+    }
   }
 
   /** Hex effects: violet on colour themes, the player's own colour on monochrome ones. */
