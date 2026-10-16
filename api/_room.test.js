@@ -28,8 +28,31 @@ describe('/api/room', () => {
     // A second guest can't take the room.
     expect((await POST(req({ action: 'answer', code: created.code, answer: ANSWER }))).status).toBe(409);
 
-    await POST(req({ action: 'close', code: created.code }));
+    // Only the host's token closes it.
+    expect((await POST(req({ action: 'close', code: created.code }))).status).toBe(403);
+    await POST(req({ action: 'close', code: created.code, token: created.token }));
     expect((await GET(new Request(`https://x/api/room?code=${created.code}`))).status).toBe(404);
+  });
+
+  it('lets the host re-offer the room to more friends', async () => {
+    const created = await (await POST(req({ action: 'create', offer: OFFER }))).json();
+    const { code, token } = created;
+    expect(typeof token).toBe('string');
+    expect((await POST(req({ action: 'answer', code, answer: ANSWER, seq: 0 }))).status).toBe(200);
+
+    // Nobody but the host can replace the offer.
+    expect((await POST(req({ action: 'reoffer', code, offer: OFFER, token: 'nope' }))).status).toBe(403);
+    const re = await (await POST(req({ action: 'reoffer', code, offer: OFFER, token }))).json();
+    expect(re.seq).toBe(1);
+
+    const got = await (await GET(new Request(`https://x/api/room?code=${code}`))).json();
+    expect(got.seq).toBe(1);
+    expect(got.answer).toBeNull();
+    // An answer to the old offer is stale; one to the new offer lands, once.
+    expect((await POST(req({ action: 'answer', code, answer: ANSWER, seq: 0 }))).status).toBe(409);
+    expect((await POST(req({ action: 'answer', code, answer: ANSWER, seq: 1 }))).status).toBe(200);
+    expect((await POST(req({ action: 'answer', code, answer: ANSWER, seq: 1 }))).status).toBe(409);
+    await POST(req({ action: 'close', code, token }));
   });
 
   it('rejects junk', async () => {
@@ -61,10 +84,10 @@ describe('/api/room quick match', () => {
 
   it('skips rooms that were closed or expired', async () => {
     const a = await (await POST(req({ action: 'quick', offer: OFFER }))).json();
-    await POST(req({ action: 'close', code: a.code }));
+    await POST(req({ action: 'close', code: a.code, token: a.token }));
     const b = await (await POST(req({ action: 'quick', offer: OFFER }))).json();
     expect(b.role).toBe('host');
     expect(b.code).not.toBe(a.code);
-    await POST(req({ action: 'close', code: b.code }));
+    await POST(req({ action: 'close', code: b.code, token: b.token }));
   });
 });

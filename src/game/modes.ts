@@ -17,7 +17,8 @@ export interface ModeConfig {
   /** Random arena twists from level 6. */
   twists: boolean;
   rewinds: number;
-  players: 1 | 2;
+  /** Default number of snakes; online versus can start with up to MAX_PLAYERS. */
+  players: number;
   rhythm: boolean;
   /** No death: self-hits cut the tail, shed walls just crumble. */
   zen: boolean;
@@ -130,5 +131,7 @@ export const MODES: Record<ModeId, ModeConfig> = {
     blurb: 'Play levels from the editor or a shared link.',
   },
 };
+
+export const MAX_PLAYERS = 4;
 
 export const MODE_ORDER: ModeId[] = ['classic', 'arcade', 'daily', 'zen', 'rhythm', 'endless', 'versus'];

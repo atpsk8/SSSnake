@@ -104,3 +104,41 @@ describe('versus hex', () => {
     expect(g.p0.hexes).toBe(0);
   });
 });
+
+describe('four-player versus', () => {
+  it('spawns four snakes in separate corners', () => {
+    const g = new Game({ mode: 'versus', seed: 3, players: 4 });
+    expect(g.players).toHaveLength(4);
+    const heads = g.players.map((p) => `${p.body[0].x},${p.body[0].y}`);
+    expect(new Set(heads).size).toBe(4);
+    expect(new Game({ mode: 'versus', seed: 3, players: 9 }).players).toHaveLength(4);
+    expect(new Game({ mode: 'arcade', seed: 3, players: 4 }).players).toHaveLength(1);
+  });
+
+  it('hexes the nearest opponent, skipping protected ones', () => {
+    const g = new Game({ mode: 'versus', seed: 3, players: 4 });
+    g.banner = null;
+    g.time = 5000;
+    const at = (x: number, y: number) => row(x, y, 8);
+    // Distances measure the short way round the wrapping board.
+    g.players[0].body = at(10, 10);
+    g.players[1].body = at(34, 34); // 24 away
+    g.players[2].body = at(20, 14); // 10 away: nearest
+    g.players[3].body = at(30, 18); // 20 away
+    for (const p of g.players) p.prevBody = p.body.map((s) => ({ ...s }));
+    expect(g.hexTarget(g.players[0])?.id).toBe(2);
+    g.players[2].hexImmune = 1000;
+    expect(g.hexTarget(g.players[0])?.id).toBe(3);
+    expect(g.shed(0)).toBe(true);
+    expect(g.players[3].hexWarn).toBeGreaterThan(0);
+  });
+
+  it('the last snake alive wins the round', () => {
+    const g = new Game({ mode: 'versus', seed: 3, players: 3 });
+    g.forfeit(1);
+    expect(g.status).toBe('playing');
+    g.forfeit(2);
+    expect(g.status).toBe('over');
+    expect(g.winner).toBe(0);
+  });
+});

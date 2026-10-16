@@ -179,7 +179,8 @@ export class Renderer {
   }
 
   playerColor(id: number): string {
-    return id === 1 ? this.palette.alt : this.palette.fg;
+    const p = this.palette;
+    return [p.fg, p.alt, p.p3 ?? p.gold, p.p4 ?? p.rival][id] ?? p.fg;
   }
 
   /** Hex effects: violet on colour themes, the player's own colour on monochrome ones. */

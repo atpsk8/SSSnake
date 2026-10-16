@@ -1,6 +1,8 @@
 // Online Versus matchmaking. Two ways in:
 //  - invite code: the host posts a WebRTC offer and gets a short code; the guest fetches the
-//    offer by code and posts an answer; the host polls for it.
+//    offer by code and posts an answer; the host polls for it. For up to 4 players the host
+//    then posts a fresh offer ("reoffer", bumping `seq`) for the next friend, using the room's
+//    secret token so nobody else can replace it.
 //  - quick match: a public queue. If someone is waiting you get their offer (guest); otherwise
 //    your offer becomes a room in the queue (host).
 // After that the two browsers talk directly and this endpoint is no longer involved.
@@ -22,10 +24,11 @@ export function makeCode(rand = Math.random) {
 }
 
 async function createRoom(cfg, offer, quick) {
+  const token = crypto.randomUUID();
   for (let tries = 0; tries < 8; tries++) {
     const code = makeCode();
-    const [ok] = await redis(cfg, [['SET', `room:${code}`, JSON.stringify({ offer, quick }), 'EX', ROOM_TTL, 'NX']]);
-    if (ok) return code;
+    const [ok] = await redis(cfg, [['SET', `room:${code}`, JSON.stringify({ offer, quick, seq: 0, token }), 'EX', ROOM_TTL, 'NX']]);
+    if (ok) return { code, token };
   }
   return null;
 }
@@ -44,7 +47,7 @@ export async function GET(request) {
     const [raw] = await redis(cfg, [['GET', `room:${code}`]]);
     if (!raw) return json({ error: 'not_found' }, 404);
     const room = JSON.parse(raw);
-    return json({ configured: true, offer: room.offer, answer: room.answer ?? null });
+    return json({ configured: true, offer: room.offer, answer: room.answer ?? null, seq: room.seq ?? 0 });
   } catch {
     return json({ error: 'store_error' }, 502);
   }
@@ -69,8 +72,8 @@ export async function POST(request) {
 
     if (body?.action === 'create') {
       if (!validSdp(body.offer)) return json({ error: 'bad_offer' }, 400);
-      const code = await createRoom(cfg, body.offer, false);
-      return code ? json({ configured: true, code }) : json({ error: 'busy' }, 503);
+      const made = await createRoom(cfg, body.offer, false);
+      return made ? json({ configured: true, ...made }) : json({ error: 'busy' }, 503);
     }
 
     if (body?.action === 'quick') {
@@ -85,13 +88,13 @@ export async function POST(request) {
         if (room.answer) continue;
         return json({ configured: true, role: 'guest', code, offer: room.offer });
       }
-      const code = await createRoom(cfg, body.offer, true);
-      if (!code) return json({ error: 'busy' }, 503);
+      const made = await createRoom(cfg, body.offer, true);
+      if (!made) return json({ error: 'busy' }, 503);
       await redis(cfg, [
-        ['RPUSH', QUEUE, code],
+        ['RPUSH', QUEUE, made.code],
         ['EXPIRE', QUEUE, ROOM_TTL],
       ]);
-      return json({ configured: true, role: 'host', code });
+      return json({ configured: true, role: 'host', ...made });
     }
 
     const code = String(body?.code || '').toUpperCase();
@@ -103,12 +106,35 @@ export async function POST(request) {
       const [raw] = await redis(cfg, [['GET', key]]);
       if (!raw) return json({ error: 'not_found' }, 404);
       const room = JSON.parse(raw);
+      const seq = room.seq ?? 0;
+      // Answering an offer the host has already replaced: fetch the room again.
+      if (body.seq !== undefined && Number(body.seq) !== seq) return json({ error: 'stale' }, 409);
       if (room.answer) return json({ error: 'taken' }, 409);
+      // Two friends can read the same offer; only the first answer to claim it counts.
+      const [claimed] = await redis(cfg, [['SET', `ans:${code}:${seq}`, '1', 'EX', ROOM_TTL, 'NX']]);
+      if (!claimed) return json({ error: 'taken' }, 409);
       await redis(cfg, [['SET', key, JSON.stringify({ ...room, answer: body.answer }), 'EX', ROOM_TTL]]);
       return json({ configured: true, ok: true });
     }
 
+    if (body.action === 'reoffer') {
+      if (!validSdp(body.offer)) return json({ error: 'bad_offer' }, 400);
+      const [raw] = await redis(cfg, [['GET', key]]);
+      if (!raw) return json({ error: 'not_found' }, 404);
+      const room = JSON.parse(raw);
+      if (!room.token || body.token !== room.token) return json({ error: 'forbidden' }, 403);
+      const seq = (room.seq ?? 0) + 1;
+      await redis(cfg, [['SET', key, JSON.stringify({ ...room, offer: body.offer, answer: null, seq }), 'EX', ROOM_TTL]]);
+      return json({ configured: true, ok: true, seq });
+    }
+
     if (body.action === 'close') {
+      // Only the host (who holds the token) may close a room.
+      const [raw] = await redis(cfg, [['GET', key]]);
+      if (raw) {
+        const room = JSON.parse(raw);
+        if (room.token && body.token !== room.token) return json({ error: 'forbidden' }, 403);
+      }
       await redis(cfg, [
         ['DEL', key],
         ['LREM', QUEUE, 0, code],

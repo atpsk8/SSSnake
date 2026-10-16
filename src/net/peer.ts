@@ -11,7 +11,9 @@ const POLL_MS = 1500;
 const CONNECT_TIMEOUT_MS = 20000;
 const ROOM_LIFETIME_MS = 10 * 60 * 1000;
 const DISCONNECT_GRACE_MS = 5000;
-const KINDS = new Set(['hello', 'start', 'in', 'hash', 'ready', 'ping', 'pong', 'bye']);
+const KINDS = new Set(['hello', 'lobby', 'start', 'in', 'hash', 'ready', 'ping', 'pong', 'left', 'bye']);
+/** A friend joining while another is mid-handshake waits this long for the room to free up. */
+const JOIN_BUSY_MS = 30000;
 
 export class NetError extends Error {}
 
@@ -214,7 +216,12 @@ async function makeOffer(onStatus: (s: string) => void) {
 }
 
 /** Host side: poll the room until a guest answers, then wait for the channel to open. */
-async function awaitGuest(pc: RTCPeerConnection, ch: RTCDataChannel, code: string, opts: { onStatus(s: string): void; signal: AbortSignal }) {
+async function awaitGuest(
+  pc: RTCPeerConnection,
+  ch: RTCDataChannel,
+  code: string,
+  opts: { onStatus(s: string): void; signal: AbortSignal; token: string; keepOpen?: boolean },
+) {
   const deadline = Date.now() + ROOM_LIFETIME_MS;
   for (;;) {
     if (Date.now() > deadline) throw new NetError('Nobody joined within 10 minutes. The room has expired.');
@@ -228,12 +235,12 @@ async function awaitGuest(pc: RTCPeerConnection, ch: RTCDataChannel, code: strin
     }
   }
   await opened(ch, opts.signal);
-  void room('POST', { action: 'close', code }).catch(() => {});
+  if (!opts.keepOpen) void room('POST', { action: 'close', code, token: opts.token }).catch(() => {});
   return new PeerLink(pc, ch);
 }
 
 /** Guest side: answer a host's offer and wait for their channel. */
-async function answer(code: string, offer: string, opts: { onStatus(s: string): void; signal: AbortSignal }) {
+async function answer(code: string, offer: string, opts: { onStatus(s: string): void; signal: AbortSignal; seq?: number }) {
   const ice = await getIce();
   const pc = new RTCPeerConnection({ iceServers: ice.servers });
   try {
@@ -244,8 +251,8 @@ async function answer(code: string, offer: string, opts: { onStatus(s: string): 
     await pc.setLocalDescription(await pc.createAnswer());
     opts.onStatus('gathering network routes...');
     await gathered(pc);
-    const sent = await room('POST', { action: 'answer', code, answer: pc.localDescription?.sdp });
-    if (sent.status === 409) throw new NetError('That room is already full.');
+    const sent = await room('POST', { action: 'answer', code, answer: pc.localDescription?.sdp, seq: opts.seq });
+    if (sent.status === 409) throw new RoomBusy();
     if (sent.status === 404) throw new NetError('That room just expired.');
     if (sent.status !== 200) throw new NetError('Could not join that room.');
     opts.onStatus('connecting...');
@@ -263,22 +270,69 @@ async function answer(code: string, offer: string, opts: { onStatus(s: string): 
   }
 }
 
+/** Someone else claimed the room's current offer first; fetch it again and retry. */
+class RoomBusy extends NetError {
+  constructor() {
+    super('That room is busy.');
+  }
+}
+
 // ---------------------------------------------------------------- public entry points
 
-export async function hostRoom(opts: { onCode(code: string): void; onStatus(text: string): void; signal: AbortSignal }): Promise<PeerLink> {
-  needRtc();
-  const { pc, ch, sdp } = await makeOffer(opts.onStatus);
-  let code = '';
-  try {
-    const created = await room('POST', { action: 'create', offer: sdp });
-    if (created.status !== 200 || typeof created.data.code !== 'string') throw new NetError('Could not create a room.');
-    code = created.data.code;
-    opts.onCode(code);
-    return await awaitGuest(pc, ch, code, opts);
-  } catch (err) {
-    pc.close();
-    if (code) void room('POST', { action: 'close', code }).catch(() => {});
-    throw err;
+/**
+ * An invite room that friends join one at a time: each gets its own connection offer. After a
+ * friend connects, `nextGuest` posts a fresh offer under the same code for the next one.
+ */
+export class HostRoom {
+  private constructor(
+    readonly code: string,
+    private token: string,
+    private pending: { pc: RTCPeerConnection; ch: RTCDataChannel } | null,
+  ) {}
+
+  static async open(onStatus: (s: string) => void): Promise<HostRoom> {
+    needRtc();
+    const { pc, ch, sdp } = await makeOffer(onStatus);
+    try {
+      const created = await room('POST', { action: 'create', offer: sdp });
+      if (created.status !== 200 || typeof created.data.code !== 'string' || typeof created.data.token !== 'string') {
+        throw new NetError('Could not create a room.');
+      }
+      return new HostRoom(created.data.code, created.data.token, { pc, ch });
+    } catch (err) {
+      pc.close();
+      throw err;
+    }
+  }
+
+  /** Wait for the next friend to connect. The room stays open for more until `close`. */
+  async nextGuest(opts: { onStatus(s: string): void; signal: AbortSignal }): Promise<PeerLink> {
+    if (!this.pending) {
+      const { pc, ch, sdp } = await makeOffer(() => {});
+      const re = await room('POST', { action: 'reoffer', code: this.code, token: this.token, offer: sdp });
+      if (re.status !== 200) {
+        pc.close();
+        throw new NetError(re.status === 404 ? 'The room expired.' : 'Could not reopen the room.');
+      }
+      this.pending = { pc, ch };
+    }
+    const { pc, ch } = this.pending;
+    try {
+      const link = await awaitGuest(pc, ch, this.code, { ...opts, token: this.token, keepOpen: true });
+      this.pending = null;
+      return link;
+    } catch (err) {
+      pc.close();
+      this.pending = null;
+      throw err;
+    }
+  }
+
+  /** Stop taking friends: delete the room and drop any half-made connection. */
+  close() {
+    this.pending?.pc.close();
+    this.pending = null;
+    void room('POST', { action: 'close', code: this.code, token: this.token }).catch(() => {});
   }
 }
 
@@ -286,11 +340,25 @@ export async function joinRoom(rawCode: string, opts: { onStatus(text: string): 
   needRtc();
   const code = rawCode.trim().toUpperCase();
   if (!/^[A-HJ-NP-Z2-9]{4}$/.test(code)) throw new NetError('Codes are 4 characters, like K7QX.');
-  const got = await room('GET', undefined, code);
-  if (got.status === 404) throw new NetError(`No room ${code}. Codes expire after 10 minutes.`);
-  if (got.status !== 200 || typeof got.data.offer !== 'string') throw new NetError('Could not read that room.');
-  if (got.data.answer) throw new NetError('That room is already full.');
-  return answer(code, got.data.offer, opts);
+  const deadline = Date.now() + JOIN_BUSY_MS;
+  for (let waited = false; ; waited = true) {
+    const got = await room('GET', undefined, code);
+    if (got.status === 404) {
+      throw new NetError(waited ? 'The room closed: the match may have started or be full.' : `No room ${code}. Codes expire after 10 minutes.`);
+    }
+    if (got.status !== 200 || typeof got.data.offer !== 'string') throw new NetError('Could not read that room.');
+    // Someone else may be mid-join: then wait for the host to open the room up again.
+    if (!got.data.answer) {
+      try {
+        return await answer(code, got.data.offer, { ...opts, seq: Number(got.data.seq) || 0 });
+      } catch (err) {
+        if (!(err instanceof RoomBusy)) throw err;
+      }
+    }
+    if (Date.now() > deadline) throw new NetError('That room is full or busy. Try again in a moment.');
+    if (!waited) opts.onStatus('someone else is joining, waiting a moment...');
+    await sleep(POLL_MS, opts.signal);
+  }
 }
 
 /** Public matchmaking: join whoever is waiting, or wait in the queue yourself. */
@@ -302,6 +370,7 @@ export async function quickMatch(opts: {
   needRtc();
   const { pc, ch, sdp } = await makeOffer(opts.onStatus);
   let code = '';
+  let token = '';
   try {
     const res = await room('POST', { action: 'quick', offer: sdp });
     if (res.status !== 200 || typeof res.data.code !== 'string') throw new NetError('Matchmaking is busy. Try again.');
@@ -313,12 +382,13 @@ export async function quickMatch(opts: {
       return { link, role: 'guest' };
     }
     code = res.data.code;
+    token = String(res.data.token ?? '');
     opts.onWaiting();
-    const link = await awaitGuest(pc, ch, code, opts);
+    const link = await awaitGuest(pc, ch, code, { ...opts, token });
     return { link, role: 'host' };
   } catch (err) {
     pc.close();
-    if (code) void room('POST', { action: 'close', code }).catch(() => {});
+    if (code) void room('POST', { action: 'close', code, token }).catch(() => {});
     throw err;
   }
 }

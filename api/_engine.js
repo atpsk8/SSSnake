@@ -1347,7 +1347,8 @@ var Game = class Game {
 		this.rewinds = this.mode.rewinds;
 		if (opts.mode === "daily") this.startArena = this.seed % ARENA_ORDER.length;
 		const classes = opts.classes ?? [];
-		for (let i = 0; i < this.mode.players; i++) this.players.push(newPlayer(i, this.mode.classAbility ? classes[i] ?? "racer" : "racer"));
+		const count = this.mode.players > 1 ? Math.max(2, Math.min(4, opts.players ?? this.mode.players)) : 1;
+		for (let i = 0; i < count; i++) this.players.push(newPlayer(i, this.mode.classAbility ? classes[i] ?? "racer" : "racer"));
 		this.loadLevel(1, false);
 	}
 	get p0() {
@@ -1483,10 +1484,19 @@ var Game = class Game {
 		return this.mode.abilities && p.alive && p.shedCooldown <= 0 && p.body.length >= this.shedMinLength;
 	}
 	/** The opponent a hex from `p` would hit, if it can be hexed right now. */
+	/** The nearest opponent a hex from `p` can hit right now (warned, hexed or immune ones are skipped). */
 	hexTarget(p) {
-		const o = this.players.find((q) => q !== p && q.alive);
-		if (!o || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) return null;
-		return o;
+		let best = null;
+		let bestD = Infinity;
+		for (const o of this.players) {
+			if (o === p || !o.alive || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) continue;
+			const d = this.reach(o.body[0], p.body[0]);
+			if (d < bestD) {
+				best = o;
+				bestD = d;
+			}
+		}
+		return best;
 	}
 	canHexP(p) {
 		return this.mode.hex && p.alive && this.time >= HEX_GRACE_MS && p.shedCooldown <= 0 && p.body.length >= 6 && this.hexTarget(p) !== null;
@@ -2084,6 +2094,11 @@ var Game = class Game {
 		this.kill(p, cause, pos);
 		return false;
 	}
+	/** Online: a player left the match. Their snake drops out of the round. */
+	forfeit(pid) {
+		const p = this.players[pid];
+		if (p?.alive && this.status === "playing") this.kill(p, "left", p.body[0]);
+	}
 	kill(p, cause, pos) {
 		if (!p.alive) return;
 		p.alive = false;
@@ -2587,7 +2602,13 @@ var Game = class Game {
 			dir: a.dir
 		}));
 		this.rebuildSolid();
-		const spawns = this.players.length === 2 ? [[this.levelSpawnFor(0), "right"], [this.levelSpawnFor(1), "left"]] : [[spec.spawn, spec.spawnDir]];
+		const VERSUS_DIRS = [
+			"right",
+			"left",
+			"down",
+			"up"
+		];
+		const spawns = this.players.length > 1 ? this.players.map((_, i) => [this.levelSpawnFor(i), VERSUS_DIRS[i]]) : [[spec.spawn, spec.spawnDir]];
 		this.players.forEach((p, i) => {
 			const [pos, dir] = spawns[i];
 			p.body = this.layBody(pos, dir, 4);
@@ -2718,16 +2739,31 @@ var Game = class Game {
 		return false;
 	}
 	levelSpawnFor(id) {
-		if (this.players.length === 2) {
+		if (this.players.length > 1) {
 			const dx = Math.round(this.w / 6);
 			const dy = Math.round(this.h / 4);
-			return id === 0 ? {
-				x: dx,
-				y: dy
-			} : {
-				x: this.w - 1 - dx,
-				y: this.h - 1 - dy
-			};
+			const left = dx;
+			const right = this.w - 1 - dx;
+			const top = dy;
+			const bottom = this.h - 1 - dy;
+			return [
+				{
+					x: left,
+					y: top
+				},
+				{
+					x: right,
+					y: bottom
+				},
+				{
+					x: right,
+					y: top
+				},
+				{
+					x: left,
+					y: bottom
+				}
+			][id];
 		}
 		return this.spec.spawn;
 	}

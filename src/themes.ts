@@ -11,6 +11,9 @@ export interface Palette {
   faint: string;
   /** Second player. */
   alt: string;
+  /** Third and fourth players (online versus); themes without them reuse other inks. */
+  p3?: string;
+  p4?: string;
   /** Food and highlights. */
   accent: string;
   gold: string;
@@ -216,6 +219,8 @@ export const THEMES: Record<ThemeId, ThemeDef> = {
       dim: '#5b5680',
       faint: '#17132a',
       alt: '#ff5a6e',
+      p3: '#9dff6a',
+      p4: '#ff8a3d',
       accent: '#ffd23f',
       gold: '#ffd23f',
       danger: '#ff5a6e',

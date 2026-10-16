@@ -9,7 +9,7 @@ import { Editor } from './editor';
 import { CLASSES, CLASS_ORDER } from './game/classes';
 import { Game, SHED_COOLDOWN_MS } from './game/engine';
 import { MODIFIER_INFO, type LevelData } from './game/levels';
-import { MODES } from './game/modes';
+import { MAX_PLAYERS, MODES } from './game/modes';
 import { MUTATIONS } from './game/mutations';
 import { dailySeed, todayKey } from './game/rng';
 import type { DeathCause, Dir, EffectKind, GameEvent, ModeId, MutationId, SnakeClass, Vec } from './game/types';
@@ -17,8 +17,8 @@ import { decodeGhost, encodeGhost, ghostBodyAt, type Ghost } from './ghost';
 import { bindInput, pressButton, type InputHandlers } from './input';
 import { fetchReplay, globalBoard, submitGlobal } from './leaderboard';
 import type { Lockstep, NetInput } from './net/lockstep';
-import { OnlineMatch } from './net/online';
-import { NetError, hostRoom, joinRoom, netStatus, quickMatch, type PeerLink } from './net/peer';
+import { OnlineMatch, type OnlineHooks } from './net/online';
+import { HostRoom, NetError, joinRoom, netStatus, quickMatch, type PeerLink } from './net/peer';
 import { CLASS_UNLOCK, SKINS, evaluate, isUnlocked, type RunContext } from './progress';
 import { POWER_LABEL, Renderer } from './render';
 import { THEMES, type ThemeId } from './themes';
@@ -108,6 +108,7 @@ const DEATH_TEXT: Record<DeathCause, string> = {
   rival: 'killed by rival.exe',
   boss: 'killed by the boss process',
   player: 'snake collision',
+  left: 'left the match',
 };
 
 // ---------------------------------------------------------------- helpers
@@ -434,13 +435,13 @@ function resetOverScreen() {
   lastBoard = null;
 }
 
-function finishVersus(g: Game, names: [string, string], wins: number[], round: number, over: boolean, me: number | null) {
+function finishVersus(g: Game, names: string[], wins: number[], round: number, over: boolean, me: number | null) {
   const w = g.winner ?? -1;
   const who = (i: number) => (me === null ? `player ${i + 1}` : i === me ? 'you' : names[i]);
   const take = (i: number) => (who(i) === 'you' ? 'you take' : `${who(i)} takes`);
   $('overTitle').textContent = over ? 'match over' : `round ${round}`;
   $('overCause').textContent = g.deathCause ? DEATH_TEXT[g.deathCause] : '';
-  $('finalScore').textContent = `${wins[0]}-${wins[1]}`;
+  $('finalScore').textContent = wins.join('-');
   $('bestLine').classList.remove('hidden');
   $('bestLine').textContent = over
     ? w >= 0
@@ -450,11 +451,7 @@ function finishVersus(g: Game, names: [string, string], wins: number[], round: n
       ? `${take(w)} round ${round}`
       : `round ${round} is a draw`;
   $('summary').innerHTML = (
-    [
-      [`${names[0]} score`, g.players[0].score],
-      [`${names[1]} score`, g.players[1].score],
-      ['round', round],
-    ] as [string, number][]
+    [...g.players.map((q, i) => [`${names[i] ?? `P${i + 1}`} score`, q.score]), ['round', round]] as [string, number][]
   )
     .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v.toLocaleString()}</dd>`)
     .join('');
@@ -566,10 +563,11 @@ function finish() {
 
 // ---------------------------------------------------------------- online
 
-function startOnline(role: 'host' | 'guest', link: PeerLink) {
-  term.print('link established. handshaking...', 'ok');
-  online = new OnlineMatch(role, link, data.settings.name.trim(), selectedClass(), {
+/** Hooks for an online match. `settled` fires when the first round starts or the match ends. */
+function onlineHooks(t: Terminal, settled: () => void): OnlineHooks {
+  return {
     started: (g, l) => {
+      settled();
       game = g;
       lock = l;
       roundHandled = false;
@@ -583,18 +581,41 @@ function startOnline(role: 'host' | 'guest', link: PeerLink) {
       sound.unlock();
       show('play');
     },
-    peerReady: () => {
+    lobby: (names, me) => {
+      if (screen !== 'term') return;
+      const list = names.map((n, i) => `${i === me ? 'you' : n}${i === 0 ? ' (host)' : ''}`).join(', ');
+      t.print(`in the room (${names.length}/${MAX_PLAYERS}): ${list}`, 'ok');
+    },
+    peerReady: (ready, of) => {
       if (screen === 'over') {
         $('onlineStatus').classList.remove('hidden');
-        $('onlineStatus').textContent = '> opponent is ready';
+        $('onlineStatus').textContent = `> ${ready}/${of} ready`;
       }
     },
+    left: (name) => {
+      if (screen === 'term') t.print(`${name} left the match.`, 'dim');
+      else toast(`${name} left`, 'their snake drops out of the match.');
+    },
     ended: (reason) => {
+      settled();
       online = null;
       lock = null;
       toTerminal(`connection closed: ${reason}`, 'err');
     },
-  });
+  };
+}
+
+/** Resolves when `signal` aborts. */
+const aborted = (signal: AbortSignal) => new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+
+/** Wait in the lobby until the match starts, it ends, or the player cancels (then leave). */
+async function waitForStart(m: OnlineMatch, begun: Promise<void>, t: Terminal, signal: AbortSignal) {
+  await Promise.race([begun, aborted(signal)]);
+  if (signal.aborted && online === m && !m.started) {
+    online = null;
+    m.leave();
+    t.print('left the room.', 'dim');
+  }
 }
 
 const RERUN_KEY = 'sssnake.rerun';
@@ -624,61 +645,107 @@ async function reloadIfStale(t: Terminal, rerun: string): Promise<boolean> {
   return true;
 }
 
+/** Host an invite room: up to three friends join by code, then the host types `start`. */
 async function invite(t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
   if (await reloadIfStale(t, 'invite')) return;
   t.print('opening room...', 'dim');
+  let room: HostRoom;
   try {
-    const link = await hostRoom({
-      signal,
-      onStatus: (s) => t.print(s, 'dim'),
-      onCode: (code) => {
-        const url = `${location.origin}${location.pathname}#join=${code}`;
-        t.print('');
-        t.print(`  ROOM CODE:  ${code.split('').join(' ')}`, 'big');
-        t.print('');
-        t.print(`your friend types {join ${code}|join ${code}}, or opens:`);
-        t.print(url, 'bright');
-        void navigator.clipboard?.writeText(url).then(
-          () => t.print('(link copied to clipboard)', 'dim'),
-          () => {},
-        );
-        t.print('waiting for an opponent... type {cancel} to stop.', 'dim');
-      },
-    });
-    startOnline('host', link);
+    room = await HostRoom.open((s) => t.print(s, 'dim'));
   } catch (err) {
     if (!signal.aborted) t.print((err as Error).message, 'err');
     if (!(err instanceof NetError) && !signal.aborted) console.error(err);
+    return;
   }
+  const code = room.code;
+  const url = `${location.origin}${location.pathname}#join=${code}`;
+  t.print('');
+  t.print(`  ROOM CODE:  ${code.split('').join(' ')}`, 'big');
+  t.print('');
+  t.print(`up to ${MAX_PLAYERS - 1} friends type {join ${code}|join ${code}}, or open:`);
+  t.print(url, 'bright');
+  void navigator.clipboard?.writeText(url).then(
+    () => t.print('(link copied to clipboard)', 'dim'),
+    () => {},
+  );
+  t.print('when everyone is in, type {start}. ({cancel} closes the room.)', 'dim');
+
+  let settle = () => {};
+  const begun = new Promise<void>((resolve) => (settle = resolve));
+  const host = new OnlineMatch('host', data.settings.name.trim(), selectedClass(), onlineHooks(t, settle));
+  online = host;
+  t.taskInput = (key) => {
+    if (key !== 'start' && key !== 'go') return false;
+    const why = host.start();
+    if (why) t.print(why, 'err');
+    return true;
+  };
+  // Take friends one at a time until the match starts, the room is full, or it's cancelled.
+  const stop = new AbortController();
+  signal.addEventListener('abort', () => stop.abort(), { once: true });
+  void (async () => {
+    while (!host.started && !host.full && !stop.signal.aborted) {
+      try {
+        const link = await room.nextGuest({ signal: stop.signal, onStatus: () => {} });
+        if (host.addGuest(link)) t.print('a friend connected. saying hello...', 'dim');
+      } catch (err) {
+        if (!stop.signal.aborted && online === host) t.print(`${(err as Error).message} (friends already in can still play.)`, 'err');
+        break;
+      }
+    }
+    room.close();
+  })();
+  await waitForStart(host, begun, t, signal);
+  t.taskInput = null;
+  stop.abort();
+  room.close();
 }
 
 async function join(code: string, t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
   if (await reloadIfStale(t, `join ${code}`)) return;
   t.print(`connecting to room ${code.toUpperCase()}...`, 'dim');
+  let link: PeerLink;
   try {
-    const link = await joinRoom(code, { signal, onStatus: (s) => t.print(s, 'dim') });
-    startOnline('guest', link);
+    link = await joinRoom(code, { signal, onStatus: (s) => t.print(s, 'dim') });
   } catch (err) {
     if (!signal.aborted) t.print((err as Error).message, 'err');
+    return;
   }
+  t.print('connected. waiting for the host to start... ({cancel} to leave)', 'ok');
+  let settle = () => {};
+  const begun = new Promise<void>((resolve) => (settle = resolve));
+  const guest = new OnlineMatch('guest', data.settings.name.trim(), selectedClass(), onlineHooks(t, settle));
+  online = guest;
+  guest.connect(link);
+  await waitForStart(guest, begun, t, signal);
 }
 
+/** Public quick match: always one on one, starting as soon as both are connected. */
 async function quick(t: Terminal, signal: AbortSignal) {
   if (online) return t.print('already in a match.', 'err');
   if (await reloadIfStale(t, 'match')) return;
   t.print('looking for an opponent...', 'dim');
+  let found: { link: PeerLink; role: 'host' | 'guest' };
   try {
-    const { link, role } = await quickMatch({
+    found = await quickMatch({
       signal,
       onStatus: (s) => t.print(s, 'dim'),
       onWaiting: () => t.print('nobody waiting yet. you are first in the queue... ({cancel} to stop)', 'dim'),
     });
-    startOnline(role, link);
   } catch (err) {
     if (!signal.aborted) t.print((err as Error).message, 'err');
+    return;
   }
+  t.print('link established. handshaking...', 'ok');
+  let settle = () => {};
+  const begun = new Promise<void>((resolve) => (settle = resolve));
+  const m = new OnlineMatch(found.role, data.settings.name.trim(), selectedClass(), onlineHooks(t, settle), found.role === 'host' ? 2 : 0);
+  online = m;
+  if (found.role === 'host') m.addGuest(found.link);
+  else m.connect(found.link);
+  await waitForStart(m, begun, t, signal);
 }
 
 async function netcheck(t: Terminal) {
@@ -724,9 +791,9 @@ function updateHud(g: Game) {
   if (g.mode.id === 'versus') {
     const names = online?.names ?? (cpuBot ? ['YOU', 'CPU'] : ['P1', 'P2']);
     const wins = online?.wins ?? versus.wins;
-    setText('scoreLabel', `${names[0]} / ${names[1]}`);
-    setText('score', `${g.players[0].score} / ${g.players[1].score}`);
-    setText('mult', `ROUND ${online?.round ?? versus.round} [${wins[0]}-${wins[1]}]`);
+    setText('scoreLabel', names.join(' / '));
+    setText('score', g.players.map((q) => q.score).join(' / '));
+    setText('mult', `ROUND ${online?.round ?? versus.round} [${wins.join('-')}]`);
   } else {
     setText('scoreLabel', 'SCORE');
     setText('score', String(p.score).padStart(6, '0'));

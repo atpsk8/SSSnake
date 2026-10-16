@@ -2,7 +2,7 @@ import { ARENA_ORDER, type Arena } from './arenas';
 import { CLASSES } from './classes';
 import { findEnclosed } from './coil';
 import { arcadeLevel, levelFromData, simpleLevel, type LevelData, type LevelSpec } from './levels';
-import { MODES, type ModeConfig } from './modes';
+import { MAX_PLAYERS, MODES, type ModeConfig } from './modes';
 import { MUTATIONS, MUTATION_LIST } from './mutations';
 import { Rng } from './rng';
 import { biomeAt, generateWorld, type Biome, type BiomeId, type Treasure, type World } from './world';
@@ -153,6 +153,8 @@ export interface GameOptions {
   mode: ModeId;
   seed?: number;
   classes?: SnakeClass[];
+  /** Versus: how many snakes (2-4); defaults to the mode's count. */
+  players?: number;
   level?: LevelData;
   /** Record a ghost trail of player 1. */
   record?: boolean;
@@ -344,7 +346,8 @@ export class Game {
     this.rewinds = this.mode.rewinds;
     if (opts.mode === 'daily') this.startArena = this.seed % ARENA_ORDER.length;
     const classes = opts.classes ?? [];
-    for (let i = 0; i < this.mode.players; i++) {
+    const count = this.mode.players > 1 ? Math.max(2, Math.min(MAX_PLAYERS, opts.players ?? this.mode.players)) : 1;
+    for (let i = 0; i < count; i++) {
       this.players.push(newPlayer(i, this.mode.classAbility ? (classes[i] ?? 'racer') : 'racer'));
     }
     this.loadLevel(1, false);
@@ -505,10 +508,20 @@ export class Game {
   }
 
   /** The opponent a hex from `p` would hit, if it can be hexed right now. */
+  /** The nearest opponent a hex from `p` can hit right now (warned, hexed or immune ones are skipped). */
   hexTarget(p: Player): Player | null {
-    const o = this.players.find((q) => q !== p && q.alive);
-    if (!o || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) return null;
-    return o;
+    let best: Player | null = null;
+    let bestD = Infinity;
+    for (const o of this.players) {
+      if (o === p || !o.alive || o.hexWarn > 0 || o.hexed > 0 || o.hexImmune > 0) continue;
+      const d = this.reach(o.body[0], p.body[0]);
+      // Ties go to the lower id, so both peers agree.
+      if (d < bestD) {
+        best = o;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   canHexP(p: Player): boolean {
@@ -1106,6 +1119,12 @@ export class Game {
     return false;
   }
 
+  /** Online: a player left the match. Their snake drops out of the round. */
+  forfeit(pid: number) {
+    const p = this.players[pid];
+    if (p?.alive && this.status === 'playing') this.kill(p, 'left', p.body[0]);
+  }
+
   private kill(p: Player, cause: DeathCause, pos: Vec) {
     if (!p.alive) return;
     p.alive = false;
@@ -1564,13 +1583,10 @@ export class Game {
     this.arrows = spec.arrows.map((a) => ({ pos: { ...a.pos }, dir: a.dir }));
     this.rebuildSolid();
 
+    // Versus: one corner each, heading round the board so nobody starts nose to nose.
+    const VERSUS_DIRS: Dir[] = ['right', 'left', 'down', 'up'];
     const spawns: [Vec, Dir][] =
-      this.players.length === 2
-        ? [
-            [this.levelSpawnFor(0), 'right'],
-            [this.levelSpawnFor(1), 'left'],
-          ]
-        : [[spec.spawn, spec.spawnDir]];
+      this.players.length > 1 ? this.players.map((_, i) => [this.levelSpawnFor(i), VERSUS_DIRS[i]]) : [[spec.spawn, spec.spawnDir]];
     this.players.forEach((p, i) => {
       const [pos, dir] = spawns[i];
       p.body = this.layBody(pos, dir, 4);
@@ -1714,11 +1730,20 @@ export class Game {
   }
 
   private levelSpawnFor(id: number): Vec {
-    if (this.players.length === 2) {
-      // Opposite corners, scaled to the board: (4, 6) and (19, 17) on the standard 24x24.
+    if (this.players.length > 1) {
+      // Corners scaled to the board: (4, 6) and (19, 17) on the standard 24x24, then the other two.
       const dx = Math.round(this.w / 6);
       const dy = Math.round(this.h / 4);
-      return id === 0 ? { x: dx, y: dy } : { x: this.w - 1 - dx, y: this.h - 1 - dy };
+      const left = dx;
+      const right = this.w - 1 - dx;
+      const top = dy;
+      const bottom = this.h - 1 - dy;
+      return [
+        { x: left, y: top },
+        { x: right, y: bottom },
+        { x: right, y: top },
+        { x: left, y: bottom },
+      ][id];
     }
     return this.spec.spawn;
   }

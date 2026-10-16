@@ -26,7 +26,7 @@ The game boots into a terminal. Type a command, click a highlighted one, or tap 
 | `play [mode]` | Start `arcade` (default), `classic`, `daily`, `zen` or `rhythm`. Each mode also works on its own as a command. |
 | `versus` | Two players on one device. `versus cpu hard` (or `cpu easy\|normal\|hard`) plays the computer. |
 | `match` | Play a random opponent online (public quick-match queue). |
-| `invite` | Host an online match: prints a 4-character room code and a join link. |
+| `invite` | Host an online match for up to 4 players: prints a 4-character room code and a join link. Type `start` when everyone is in. |
 | `join <code>` | Join a friend's online match. Opening a `#join=CODE` link does this automatically. |
 | `snake [type]` | List or pick a snake type (`racer`, `viper`, `cobra`, `python`). |
 | `theme [name]` | `terminal`, `nokia`, `gameboy`, `paper`, `minimal`. |
@@ -74,10 +74,11 @@ Tab completes commands, Up/Down recalls history, and Esc / Ctrl+C / `cancel` sto
 
 ## Online versus
 
-`match` puts you in a public queue and pairs you with the next player; `invite` creates a private room and prints a code that a friend joins with `join CODE` or the link. The browsers then connect **directly** (WebRTC, peer to peer), or through a TURN relay when a direct path is blocked:
+`match` puts you in a public queue and pairs you with the next player (always one on one); `invite` creates a private room and prints a code that up to three friends join with `join CODE` or the link, and the host types `start` when everyone is in. Each friend's browser connects **directly** to the host's (WebRTC, peer to peer), or through a TURN relay when a direct path is blocked:
 
-- **Matchmaking:** `api/room.js` only swaps the two connection offers. Rooms expire after 10 minutes and are deleted once connected.
-- **Netcode:** deterministic **lockstep**. Both players run the same simulation from the same seed and send only their key presses. Input delay is set from the measured ping (3–12 frames). Checksums every 30 frames detect any drift.
+- **Matchmaking:** `api/room.js` only swaps connection offers, one friend at a time (the host re-offers the same code with a secret token). Rooms expire after 10 minutes and are deleted when the match starts.
+- **Netcode:** deterministic **lockstep**. Every player runs the same simulation from the same seed and sends only their key presses. The host relays each guest's inputs to the others (a star), so if the host leaves the match ends; if a guest drops out, their snake leaves the round and the match carries on. Input delay is set from the measured pings (3–12 frames). Checksums every 30 frames detect any drift.
+- **Players:** 2 to 4. Hex hits the nearest opponent. Two players play best of three; three or four play first to three round wins. The last snake alive takes the round.
 - **Format:** best of three on a 48×48 board whose edges wrap around (the walls don't kill), with four food on the board at once. After 60 seconds sudden death starts: both snakes speed up every 10 seconds, and the arena shrinks by a ring every 5 seconds down to 16×16 (the closing walls wrap too, so they squeeze rather than kill). Each player brings their own snake type. Space casts Hex on your opponent, and the hexed player's screen pulses purple until it wears off. Versus always uses its own dark neon arena look (cyan against coral); your chosen theme comes back when you leave.
 - **Privacy:** like any peer-to-peer game, each player's IP address is visible to the other.
 - **Relay:** `/api/ice` hands out TURN relay credentials (Cloudflare or any TURN provider) so players on strict networks can still connect. **Setup steps are in [docs/ONLINE_SETUP.md](docs/ONLINE_SETUP.md).**

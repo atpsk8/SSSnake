@@ -46,7 +46,10 @@ export class Bot {
     this.wait = REACTION_MS[this.difficulty] * (0.7 + this.rng.next() * 0.6);
 
     const out: Input[] = [];
-    const opp = g.players.find((p) => p.id !== this.pid && p.alive);
+    // The nearest rival snake (there can be up to three).
+    const opp = g.players
+      .filter((p) => p.id !== this.pid && p.alive)
+      .sort((a, b) => g.reach(a.body[0], me.body[0]) - g.reach(b.body[0], me.body[0]))[0];
     const blocked = this.blockedMap(g, me);
     const target = this.target(g, me, opp);
 

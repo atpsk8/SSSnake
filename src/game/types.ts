@@ -115,7 +115,7 @@ export interface Projectile {
   life: number;
 }
 
-export type DeathCause = 'wall' | 'self' | 'shed' | 'mine' | 'rival' | 'boss' | 'player';
+export type DeathCause = 'wall' | 'self' | 'shed' | 'mine' | 'rival' | 'boss' | 'player' | 'left';
 
 export type GameEvent =
   | { type: 'eat'; pos: Vec; points: number; mult: number; kind: 'food' | 'bit' | 'golden'; player: number }

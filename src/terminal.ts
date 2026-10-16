@@ -23,6 +23,8 @@ export class Terminal {
   promptText = 'guest@sssnake:~$';
   private bootTimer: number | null = null;
   private onAnyKey: (() => void) | null = null;
+  /** While a task runs, it may take commands of its own (e.g. `start` in an invite lobby). */
+  taskInput: ((key: string, args: string[]) => boolean) | null = null;
 
   constructor(
     private out: HTMLElement,
@@ -144,6 +146,7 @@ export class Terminal {
       return;
     }
     if (this.task) {
+      if (this.taskInput?.(key, args)) return;
       this.print('busy. type {cancel} first.', 'err');
       return;
     }

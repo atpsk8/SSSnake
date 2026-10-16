@@ -133,7 +133,7 @@ export function buildCommands(app: AppCtx): Command[] {
         t.print('  {play} [mode]      arcade (default), classic, daily, zen, rhythm, endless');
         t.print('  {versus}           two players on this device;  {cpu} to play the computer');
         t.print('  {match}            play a random opponent online');
-        t.print('  {invite}           host an online match and get a code');
+        t.print('  {invite}           host an online match for up to 4 players: share the code, type start');
         t.print('  join <code>      join a friend\'s online match');
         t.print('  {snake} [type]     list or pick your snake type');
         t.print('  {editor}           build levels;  {levels} to list saved ones');
@@ -201,7 +201,7 @@ export function buildCommands(app: AppCtx): Command[] {
     {
       name: 'invite',
       aliases: ['host'],
-      desc: 'host an online match; share the code with a friend',
+      desc: 'host an online match for up to 4: share the code, then type start',
       run: (_a, t, signal) => app.invite(t, signal),
     },
     {
