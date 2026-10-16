@@ -143,7 +143,7 @@ export class Bot {
 
   private step(g: Game, from: Vec, d: Dir): Vec | null {
     let c = add(from, DIRS[d]);
-    if (!g.inb(c)) {
+    if (!g.inb(c) || (g.wraps && g.inRing(c))) {
       if (!g.wraps) return null;
       c = g.wrapAt(c);
     }
