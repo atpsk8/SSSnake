@@ -266,12 +266,9 @@ describe('modes', () => {
   it('versus: running into the other snake ends the round', () => {
     const g = new Game({ mode: 'versus', seed: 1 });
     expect(g.players).toHaveLength(2);
-    g.players[1].body = [
-      { x: 5, y: 9 },
-      { x: 5, y: 8 },
-      { x: 5, y: 7 },
-      { x: 5, y: 6 },
-    ];
+    // A column just ahead of player 1's head, which player 1 runs into.
+    const h = g.players[0].body[0];
+    g.players[1].body = [3, 2, 1, 0].map((dy) => ({ x: h.x + 1, y: h.y + dy }));
     g.players[1].dir = 'down';
     g.step();
     expect(g.status).toBe('over');

@@ -942,6 +942,33 @@ body.editing .editor-bar {
   }
 }
 
+/* Versus: a soft violet pulse around the screen while you are hexed. */
+.hex-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: inset 0 0 90px 24px rgba(178, 107, 255, 0.55);
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(178, 107, 255, 0.18) 100%);
+  transition: opacity 0.35s ease;
+}
+
+.hex-glow.on {
+  opacity: 1;
+  animation: hex-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes hex-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* Reduced motion: no flicker, no blinking. Set by the OS or the in-game setting. */
 @media (prefers-reduced-motion: reduce) {
   *,

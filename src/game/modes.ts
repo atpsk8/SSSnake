@@ -26,6 +26,10 @@ export interface ModeConfig {
   world: number;
   /** Versus: the shed key casts a Hex on the opponent instead of shedding. */
   hex: boolean;
+  /** Side of the board for arena modes; 0 = the standard 24x24. */
+  size: number;
+  /** Food kept on the board at once. */
+  foods: number;
 }
 
 const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
@@ -44,6 +48,8 @@ const base: Omit<ModeConfig, 'id' | 'name' | 'blurb'> = {
   arena: 'box',
   world: 0,
   hex: false,
+  size: 0,
+  foods: 1,
 };
 
 export const MODES: Record<ModeId, ModeConfig> = {
@@ -100,9 +106,12 @@ export const MODES: Record<ModeId, ModeConfig> = {
     ...base,
     id: 'versus',
     name: 'Versus',
-    blurb: 'Two snakes, best of three. Space hexes your rival.',
+    blurb: 'Two snakes on a big looping board, best of three. Space hexes your rival.',
     players: 2,
     hex: true,
+    arena: 'wrap',
+    size: 48,
+    foods: 4,
   },
   endless: {
     ...base,

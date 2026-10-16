@@ -71,6 +71,10 @@ const COLLAPSE_EVERY_MS = 7000;
 const COLLAPSE_WARN_MS = 2000;
 const COLLAPSE_MAX_RING = 7;
 const VERSUS_SUDDEN_DEATH_MS = 90000;
+/** Versus sudden death: both snakes speed up by this factor every step, down to the floor. */
+const SUDDEN_DEATH_STEP_MS = 10000;
+const SUDDEN_DEATH_SPEEDUP = 0.85;
+const SUDDEN_DEATH_FLOOR = 0.45;
 const RIVAL_RESPAWN_MS = 9000;
 const BANNER_MS = 1600;
 const METER_REGEN_PER_MS = 1 / 30000;
@@ -323,8 +327,8 @@ export class Game {
 
   constructor(opts: GameOptions) {
     this.mode = MODES[opts.mode];
-    this.w = this.mode.world || W;
-    this.h = this.mode.world || H;
+    this.w = this.mode.world || this.mode.size || W;
+    this.h = this.mode.world || this.mode.size || H;
     this.solid = new Uint8Array(this.w * this.h);
     this.enclosed = new Uint8Array(this.w * this.h);
     this.seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
@@ -462,7 +466,7 @@ export class Game {
   }
 
   get shedCooldownMax(): number {
-    if (this.mode.hex) return this.collapseActive ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
+    if (this.mode.hex) return this.suddenDeath ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
     return this.has('quickmolt') ? SHED_COOLDOWN_MS / 2 : SHED_COOLDOWN_MS;
   }
 
@@ -507,13 +511,25 @@ export class Game {
     if (this.mode.rhythm) b = 60000 / this.bpm / 2;
     else if (id === 'classic') b = Math.max(60, 135 - this.p0.foods * 2.5);
     else if (this.mode.zen) b = 125;
-    else if (id === 'versus') b = 120;
+    else if (id === 'versus') b = 120 * this.suddenDeathPace;
     else if (id === 'custom') b = Math.max(70, 125 - this.levelFoods);
     else if (this.world) b = Math.max(70, 125 - this.p0.foods * 1.2);
     else if (this.spec.boss) b = Math.max(85, 120 - this.spec.bossTier * 5);
     else b = Math.max(55, 130 - (this.level - 1) * 7 - this.levelFoods * 1.5);
     if (this.players.some((p) => p.alive && p.effects.slowmo)) b *= 1.8;
     return b;
+  }
+
+  /** Versus: past 90 s the round is in sudden death. */
+  get suddenDeath(): boolean {
+    return this.mode.id === 'versus' && this.time >= VERSUS_SUDDEN_DEATH_MS;
+  }
+
+  /** Versus sudden death: step-interval factor, shrinking every 10 s down to the floor. */
+  get suddenDeathPace(): number {
+    if (!this.suddenDeath) return 1;
+    const steps = Math.floor((this.time - VERSUS_SUDDEN_DEATH_MS) / SUDDEN_DEATH_STEP_MS) + 1;
+    return Math.max(SUDDEN_DEATH_FLOOR, Math.pow(SUDDEN_DEATH_SPEEDUP, steps));
   }
 
   playerInterval(p: Player): number {
@@ -866,15 +882,14 @@ export class Game {
       if (this.mazeWarn <= 0) this.applyMaze();
     }
 
-    if (this.mode.id === 'versus' && !this.collapseActive && this.time >= VERSUS_SUDDEN_DEATH_MS) {
-      this.collapseActive = true;
-      this.collapseTimer = COLLAPSE_WARN_MS + 500;
-      this.banner = { title: 'Sudden death', subtitle: 'The walls close in', ttl: BANNER_MS };
+    // Versus sudden death: no closing walls (the board wraps), both snakes just keep speeding up.
+    if (this.suddenDeath && this.time - dt < VERSUS_SUDDEN_DEATH_MS) {
+      this.banner = { title: 'Sudden death', subtitle: 'Faster and faster', ttl: BANNER_MS };
     }
     if (this.collapseActive && this.ring < COLLAPSE_MAX_RING) {
       this.collapseTimer -= dt;
       if (this.collapseTimer <= 0) {
-        this.collapseTimer = this.mode.id === 'versus' ? 5000 : COLLAPSE_EVERY_MS;
+        this.collapseTimer = COLLAPSE_EVERY_MS;
         this.ring++;
         this.rebuildSolid();
         this.evictFromSolid();
@@ -1518,8 +1533,8 @@ export class Game {
     const spawns: [Vec, Dir][] =
       this.players.length === 2
         ? [
-            [{ x: 4, y: 6 }, 'right'],
-            [{ x: 19, y: 17 }, 'left'],
+            [this.levelSpawnFor(0), 'right'],
+            [this.levelSpawnFor(1), 'left'],
           ]
         : [[spec.spawn, spec.spawnDir]];
     this.players.forEach((p, i) => {
@@ -1568,7 +1583,7 @@ export class Game {
     this.rivalRespawn = spec.rival ? 3000 : Infinity;
     if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
 
-    this.spawnPickup('food', Infinity);
+    for (let i = 0; i < this.mode.foods; i++) this.spawnPickup('food', Infinity);
     if (this.world) {
       for (const t of treasure) this.spawnPickup(t.kind, Infinity, { ...t.pos });
       for (let i = 1; i < ENDLESS_FOOD; i++) this.spawnPickup('food', Infinity);
@@ -1665,7 +1680,12 @@ export class Game {
   }
 
   private levelSpawnFor(id: number): Vec {
-    if (this.players.length === 2) return id === 0 ? { x: 4, y: 6 } : { x: 19, y: 17 };
+    if (this.players.length === 2) {
+      // Opposite corners, scaled to the board: (4, 6) and (19, 17) on the standard 24x24.
+      const dx = Math.round(this.w / 6);
+      const dy = Math.round(this.h / 4);
+      return id === 0 ? { x: dx, y: dy } : { x: this.w - 1 - dx, y: this.h - 1 - dy };
+    }
     return this.spec.spawn;
   }
 

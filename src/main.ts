@@ -270,6 +270,7 @@ function updatePrompt() {
 // ---------------------------------------------------------------- screens
 
 function show(next: Screen) {
+  if (next !== 'play') $('hexGlow').classList.remove('on');
   if (screen === 'editor' && next !== 'editor') {
     editor.close();
     document.body.classList.remove('editing');
@@ -715,6 +716,11 @@ function updateHud(g: Game) {
     const mult = g.lengthMult * Math.max(1, g.comboActive()) * g.rhythmMult;
     setText('mult', `x${mult.toFixed(1)}`);
   }
+  // Hexed: pulse the screen. Online only your own snake counts; a shared screen shows either
+  // human player's hex (the CPU's hex shows on its snake only).
+  const humans = online ? [online.me] : cpuBot ? [0] : g.players.map((q) => q.id);
+  const hexed = g.status === 'playing' && humans.some((id) => (g.players[id]?.hexed ?? 0) > 0);
+  $('hexGlow').classList.toggle('on', hexed);
   const combo = g.comboActive(p);
   const groove = g.mode.rhythm && g.beatStreak > 1;
   $('combo').classList.toggle('hidden', combo < 2 && !groove);

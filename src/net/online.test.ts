@@ -34,6 +34,19 @@ function pair() {
   return { a: a as unknown as PeerLink, b: b as unknown as PeerLink, flush };
 }
 
+/**
+ * The versus board wraps, so driving straight never ends a round. Put player 2 (longer) in
+ * player 1's lane, heading at it: the head-on collision always goes to player 2. Applied the
+ * same way on both peers before frame 0, so it stays deterministic.
+ */
+function headOn(g: Game) {
+  const p = g.players[1];
+  const y = g.players[0].body[0].y;
+  p.body = Array.from({ length: 8 }, (_, i) => ({ x: 30 + i, y }));
+  p.prevBody = p.body.map((c) => ({ ...c }));
+  p.dir = 'left';
+}
+
 function setup() {
   const { a, b, flush } = pair();
   const rounds: { host: Game[]; guest: Game[] } = { host: [], guest: [] };
@@ -41,6 +54,7 @@ function setup() {
   const ended: string[] = [];
   const host = new OnlineMatch('host', a, 'Ann', 'viper', {
     started: (g, l) => {
+      headOn(g);
       rounds.host.push(g);
       locks.host = l;
     },
@@ -49,6 +63,7 @@ function setup() {
   });
   const guest = new OnlineMatch('guest', b, 'Bob', 'cobra', {
     started: (g, l) => {
+      headOn(g);
       rounds.guest.push(g);
       locks.guest = l;
     },
@@ -59,7 +74,7 @@ function setup() {
   return { host, guest, rounds, locks, ended, flush };
 }
 
-/** Play the current round to the end with both players driving straight (someone hits a wall). */
+/** Play the current round to the end with both players driving straight into each other. */
 function playOut(s: ReturnType<typeof setup>) {
   for (let i = 0; i < 4000; i++) {
     s.locks.host!.tick(FRAME_MS);

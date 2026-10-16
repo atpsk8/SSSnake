@@ -89,7 +89,7 @@ describe('versus hex', () => {
 
   it('sudden death shortens the cooldown', () => {
     const g = duel();
-    g.collapseActive = true;
+    g.time = 95000;
     g.shed(0);
     expect(g.players[0].shedCooldown).toBeLessThan(HEX_COOLDOWN_MS);
   });

@@ -670,10 +670,14 @@ export class Renderer {
   /** Ease the view toward a point a little ahead of the head (or the replay focus). */
   private followCamera(game: Game, dt: number) {
     let target: Vec;
-    let zoom = 1;
+    // Endless follows the snake at 24 cells across; big arenas (versus) zoom out to show it all.
+    const fit = game.world ? 1 : Math.min(W / game.w, H / game.h);
+    let zoom = fit;
     if (this.camera) {
       target = { x: this.camera.x + 0.5, y: this.camera.y + 0.5 };
-      zoom = Math.max(1, this.camera.zoom);
+      zoom = fit * Math.max(1, this.camera.zoom);
+    } else if (!game.world) {
+      target = { x: game.w / 2, y: game.h / 2 };
     } else {
       const pl = game.players.find((q) => q.alive && q.body.length) ?? game.p0;
       if (pl.body.length) {

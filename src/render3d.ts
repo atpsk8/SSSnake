@@ -391,10 +391,14 @@ export class Renderer3D {
     return this.bw > W || this.bh > H;
   }
 
+  /** Endless follows the snake; arenas (even big versus ones) keep the whole board in view. */
+  private follows = false;
+
   /** Match the floor, frame and instance buffers to this game's board size. */
   private setBoard(game: Game) {
     BW = game.w;
     BH = game.h;
+    this.follows = !!game.world;
     const tintKey = game.world ? game.world.biome : null;
     if (game.w === this.bw && game.h === this.bh && (this.floorMat.map?.userData.biome ?? null) === tintKey) return;
     const resized = game.w !== this.bw || game.h !== this.bh;
@@ -416,12 +420,19 @@ export class Renderer3D {
       this.sheds = this.regrow(this.sheds, cap);
       this.coilTiles = this.regrow(this.coilTiles, cap);
       this.boardKey = '';
-      if (this.big) {
+      const scale = Math.max(this.bw / W, this.bh / H);
+      if (this.follows) {
         this.scene.fog = new THREE.Fog(COLORS.bg, 24, 52);
         this.scene.add(this.keyLight.target);
       } else {
-        this.scene.fog = new THREE.Fog(COLORS.bg, 28, 62);
-        this.keyLight.position.set(8, 22, 10);
+        this.scene.fog = new THREE.Fog(COLORS.bg, 28 * scale, 62 * scale);
+        const s = this.keyLight.shadow.camera;
+        const reach = Math.max(15, this.bw / 2 + 3);
+        s.left = s.bottom = -reach;
+        s.right = s.top = reach;
+        s.far = 60 * scale;
+        s.updateProjectionMatrix();
+        this.keyLight.position.set(8 * scale, 22 * scale, 10 * scale);
         this.keyLight.target.position.set(0, 0, 0);
         this.keyLight.target.updateMatrixWorld();
       }
@@ -465,7 +476,7 @@ export class Renderer3D {
 
   /** Big boards: is a cell near enough to the camera to be worth drawing? */
   private near(p: Vec): boolean {
-    return !this.big || (Math.abs(wx(p.x) - this.target.x) <= CULL && Math.abs(wz(p.y) - this.target.z) <= CULL);
+    return !this.follows || (Math.abs(wx(p.x) - this.target.x) <= CULL && Math.abs(wz(p.y) - this.target.z) <= CULL);
   }
 
   /** Endless: pop the biome's name on entering it, and a landmark's when it first comes close. */
@@ -1007,7 +1018,7 @@ export class Renderer3D {
   }
 
   private drawMines(game: Game, t: number) {
-    const mines = this.big ? game.mines.filter((m) => this.near(m.pos)) : game.mines;
+    const mines = this.follows ? game.mines.filter((m) => this.near(m.pos)) : game.mines;
     while (this.mineMeshes.length < mines.length) {
       const g = new THREE.Group();
       const core = new THREE.Mesh(this.geo.mineCore, this.material(COLORS.mine, 0, 0.7));
@@ -1087,7 +1098,7 @@ export class Renderer3D {
       m.rotation.y = t * (e.i ? -1.5 : 1.5);
     });
 
-    const wells = this.big ? game.wells.filter((w) => this.near(w)) : game.wells;
+    const wells = this.follows ? game.wells.filter((w) => this.near(w)) : game.wells;
     while (this.wellMeshes.length < wells.length * 3) {
       const m = new THREE.Mesh(this.geo.well, new THREE.MeshBasicMaterial({ color: COLORS.well, transparent: true, opacity: 0.6 }));
       m.rotation.x = Math.PI / 2;
@@ -1104,7 +1115,7 @@ export class Renderer3D {
       ((m as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.2 + f * 0.6;
     });
 
-    const arrows = this.big ? game.arrows.filter((a) => this.near(a.pos)) : game.arrows;
+    const arrows = this.follows ? game.arrows.filter((a) => this.near(a.pos)) : game.arrows;
     while (this.arrowMeshes.length < arrows.length) {
       const shape = new THREE.Shape();
       shape.moveTo(0, 0.35);
@@ -1198,13 +1209,17 @@ export class Renderer3D {
     const aspect = this.width / this.height;
     // Pull back far enough to see the whole arena on narrow screens.
     const fit = aspect < 1 ? 1 / aspect : 1;
-    let height = 22 * Math.min(1.9, fit * 0.95 + 0.05);
-    let back = 15 * Math.min(1.9, fit * 0.95 + 0.05);
+    // Big arenas pull the camera back in proportion so the whole board stays in view.
+    const scale = this.follows ? 1 : Math.max(this.bw / W, this.bh / H) * (this.bw > W ? 1.12 : 1);
+    // Big arenas look down more steeply, so the near edge doesn't drop off the bottom.
+    const steep = scale > 1 ? 1.5 : 1;
+    let height = 22 * scale * steep * Math.min(1.9, fit * 0.95 + 0.05);
+    let back = (15 * scale * Math.min(1.9, fit * 0.95 + 0.05)) / steep;
     const head = game.players.find((p) => p.alive)?.body[0] ?? game.p0.body[0];
     const k = 1 - Math.pow(0.04, dt / 1000);
     // Small arenas lean a little toward the head; big boards follow it, looking slightly ahead.
-    const follow = this.big ? 1 : 0.3;
-    const lead = this.big && head ? DIRS[game.p0.dir] : { x: 0, y: 0 };
+    const follow = this.follows ? 1 : 0.3 / scale;
+    const lead = this.follows && head ? DIRS[game.p0.dir] : { x: 0, y: 0 };
     let tx = head ? wx(head.x + lead.x * 2) * follow : 0;
     let tz = head ? wz(head.y + lead.y * 2) * follow : 0;
     const len = game.p0.body.length;
@@ -1234,7 +1249,7 @@ export class Renderer3D {
       this.cam.position.y += (Math.random() - 0.5) * this.shake;
     }
     this.cam.lookAt(this.target.x, 0, this.target.z);
-    if (this.big) {
+    if (this.follows) {
       // The shadow camera only covers +-15 cells, so the key light travels with the view.
       this.keyLight.position.set(this.target.x + 8, 22, this.target.z + 10);
       this.keyLight.target.position.set(this.target.x, 0, this.target.z);

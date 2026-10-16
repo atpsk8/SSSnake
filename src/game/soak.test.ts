@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Game, type Player } from './engine';
 import { emptyLevel, type LevelData } from './levels';
-import { DIRS, DIR_LIST, OPPOSITE, W, add, eq, idx, inBounds, manhattan, wrapPos, type Dir, type ModeId, type SnakeClass, type Vec } from './types';
+import { DIRS, DIR_LIST, OPPOSITE, W, add, eq, manhattan, type Dir, type ModeId, type SnakeClass, type Vec } from './types';
 
 /** Greedy bot: avoid anything deadly, drift toward food, use abilities sometimes. */
 function botMove(g: Game, p: Player, rnd: () => number) {
@@ -9,7 +9,7 @@ function botMove(g: Game, p: Player, rnd: () => number) {
   const head = p.body[0];
   const food = g.pickups.find((q) => q.kind === 'food')?.pos ?? head;
   const blocked = (c: Vec) =>
-    g.solid[idx(c)] === 1 ||
+    g.solid[g.ix(c)] === 1 ||
     g.bossAt(c) ||
     g.players.some((o) => o.alive && o.body.some((s, i) => (o !== p || i < o.body.length - 1) && eq(s, c))) ||
     g.shedWalls.some((w) => eq(w.pos, c)) ||
@@ -18,9 +18,9 @@ function botMove(g: Game, p: Player, rnd: () => number) {
   const options = DIR_LIST.filter((d) => d !== OPPOSITE[p.dir])
     .map((d) => {
       let n = add(head, DIRS[d]);
-      if (!inBounds(n)) {
+      if (!g.inb(n)) {
         if (!g.wraps) return null;
-        n = wrapPos(n);
+        n = g.wrapAt(n);
       }
       const exit = g.portalExit(n);
       if (exit) n = exit;
@@ -84,14 +84,14 @@ describe('soak', () => {
           for (const p of g.players) {
             if (!p.alive) continue;
             expect(p.body.length).toBeGreaterThanOrEqual(2);
-            for (const s of p.body) expect(inBounds(s)).toBe(true);
+            for (const s of p.body) expect(g.inb(s)).toBe(true);
             expect(p.meter).toBeGreaterThanOrEqual(0);
             expect(p.meter).toBeLessThanOrEqual(1);
             expect(Number.isFinite(p.score)).toBe(true);
           }
-          expect(g.pickups.filter((q) => q.kind === 'food').length).toBeLessThanOrEqual(1);
+          expect(g.pickups.filter((q) => q.kind === 'food').length).toBeLessThanOrEqual(g.mode.foods);
           for (const q of g.pickups) {
-            expect(inBounds(q.pos)).toBe(true);
+            expect(g.inb(q.pos)).toBe(true);
             expect(g.solid[q.pos.y * W + q.pos.x]).toBe(0);
           }
         }

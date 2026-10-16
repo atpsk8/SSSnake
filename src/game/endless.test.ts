@@ -119,18 +119,21 @@ describe('endless world generation', () => {
 });
 
 describe('endless mode', () => {
-  it('uses a big board and leaves the arena modes at 24x24', () => {
+  it('uses a big board and leaves the other modes at their own size', () => {
     const g = new Game({ mode: 'endless', seed: 5 });
     expect([g.w, g.h]).toEqual([WORLD_SIZE, WORLD_SIZE]);
     expect(g.solid.length).toBe(WORLD_SIZE * WORLD_SIZE);
     expect(g.world).not.toBeNull();
     expect(g.biome).toBe('meadow');
     expect(g.pickups.filter((p) => p.kind === 'food')).toHaveLength(5);
-    for (const mode of ['classic', 'arcade', 'zen', 'versus'] as const) {
+    for (const mode of ['classic', 'arcade', 'zen'] as const) {
       const a = new Game({ mode, seed: 5 });
       expect([a.w, a.h]).toEqual([24, 24]);
       expect(a.world).toBeNull();
     }
+    const vs = new Game({ mode: 'versus', seed: 5 });
+    expect([vs.w, vs.h]).toEqual([48, 48]);
+    expect(vs.world).toBeNull();
     expect(MODES.endless.world).toBe(WORLD_SIZE);
   });
 

@@ -934,7 +934,9 @@ var base = {
 	zen: false,
 	arena: "box",
 	world: 0,
-	hex: false
+	hex: false,
+	size: 0,
+	foods: 1
 };
 var MODES$1 = {
 	classic: {
@@ -990,9 +992,12 @@ var MODES$1 = {
 		...base,
 		id: "versus",
 		name: "Versus",
-		blurb: "Two snakes, best of three. Space hexes your rival.",
+		blurb: "Two snakes on a big looping board, best of three. Space hexes your rival.",
 		players: 2,
-		hex: true
+		hex: true,
+		arena: "wrap",
+		size: 48,
+		foods: 4
 	},
 	endless: {
 		...base,
@@ -1169,6 +1174,10 @@ var COLLAPSE_EVERY_MS = 7e3;
 var COLLAPSE_WARN_MS = 2e3;
 var COLLAPSE_MAX_RING = 7;
 var VERSUS_SUDDEN_DEATH_MS = 9e4;
+/** Versus sudden death: both snakes speed up by this factor every step, down to the floor. */
+var SUDDEN_DEATH_STEP_MS = 1e4;
+var SUDDEN_DEATH_SPEEDUP = .85;
+var SUDDEN_DEATH_FLOOR = .45;
 var RIVAL_RESPAWN_MS = 9e3;
 var BANNER_MS = 1600;
 var METER_REGEN_PER_MS = 1 / 3e4;
@@ -1323,8 +1332,8 @@ var Game = class Game {
 	events = [];
 	constructor(opts) {
 		this.mode = MODES$1[opts.mode];
-		this.w = this.mode.world || 24;
-		this.h = this.mode.world || 24;
+		this.w = this.mode.world || this.mode.size || 24;
+		this.h = this.mode.world || this.mode.size || 24;
 		this.solid = new Uint8Array(this.w * this.h);
 		this.enclosed = new Uint8Array(this.w * this.h);
 		this.seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
@@ -1442,7 +1451,7 @@ var Game = class Game {
 		return this.has("quickmolt") ? 4 : 6;
 	}
 	get shedCooldownMax() {
-		if (this.mode.hex) return this.collapseActive ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
+		if (this.mode.hex) return this.suddenDeath ? HEX_SUDDEN_DEATH_COOLDOWN_MS : HEX_COOLDOWN_MS;
 		return this.has("quickmolt") ? SHED_COOLDOWN_MS / 2 : SHED_COOLDOWN_MS;
 	}
 	canShedP(p) {
@@ -1473,13 +1482,23 @@ var Game = class Game {
 		if (this.mode.rhythm) b = 6e4 / this.bpm / 2;
 		else if (id === "classic") b = Math.max(60, 135 - this.p0.foods * 2.5);
 		else if (this.mode.zen) b = 125;
-		else if (id === "versus") b = 120;
+		else if (id === "versus") b = 120 * this.suddenDeathPace;
 		else if (id === "custom") b = Math.max(70, 125 - this.levelFoods);
 		else if (this.world) b = Math.max(70, 125 - this.p0.foods * 1.2);
 		else if (this.spec.boss) b = Math.max(85, 120 - this.spec.bossTier * 5);
 		else b = Math.max(55, 130 - (this.level - 1) * 7 - this.levelFoods * 1.5);
 		if (this.players.some((p) => p.alive && p.effects.slowmo)) b *= 1.8;
 		return b;
+	}
+	/** Versus: past 90 s the round is in sudden death. */
+	get suddenDeath() {
+		return this.mode.id === "versus" && this.time >= VERSUS_SUDDEN_DEATH_MS;
+	}
+	/** Versus sudden death: step-interval factor, shrinking every 10 s down to the floor. */
+	get suddenDeathPace() {
+		if (!this.suddenDeath) return 1;
+		const steps = Math.floor((this.time - VERSUS_SUDDEN_DEATH_MS) / SUDDEN_DEATH_STEP_MS) + 1;
+		return Math.max(SUDDEN_DEATH_FLOOR, Math.pow(SUDDEN_DEATH_SPEEDUP, steps));
 	}
 	playerInterval(p) {
 		return this.baseInterval * (this.isSurging(p) ? .55 : 1);
@@ -1853,19 +1872,15 @@ var Game = class Game {
 			this.mazeWarn -= dt;
 			if (this.mazeWarn <= 0) this.applyMaze();
 		}
-		if (this.mode.id === "versus" && !this.collapseActive && this.time >= VERSUS_SUDDEN_DEATH_MS) {
-			this.collapseActive = true;
-			this.collapseTimer = 2500;
-			this.banner = {
-				title: "Sudden death",
-				subtitle: "The walls close in",
-				ttl: BANNER_MS
-			};
-		}
+		if (this.suddenDeath && this.time - dt < VERSUS_SUDDEN_DEATH_MS) this.banner = {
+			title: "Sudden death",
+			subtitle: "Faster and faster",
+			ttl: BANNER_MS
+		};
 		if (this.collapseActive && this.ring < COLLAPSE_MAX_RING) {
 			this.collapseTimer -= dt;
 			if (this.collapseTimer <= 0) {
-				this.collapseTimer = this.mode.id === "versus" ? 5e3 : COLLAPSE_EVERY_MS;
+				this.collapseTimer = COLLAPSE_EVERY_MS;
 				this.ring++;
 				this.rebuildSolid();
 				this.evictFromSolid();
@@ -2545,13 +2560,7 @@ var Game = class Game {
 			dir: a.dir
 		}));
 		this.rebuildSolid();
-		const spawns = this.players.length === 2 ? [[{
-			x: 4,
-			y: 6
-		}, "right"], [{
-			x: 19,
-			y: 17
-		}, "left"]] : [[spec.spawn, spec.spawnDir]];
+		const spawns = this.players.length === 2 ? [[this.levelSpawnFor(0), "right"], [this.levelSpawnFor(1), "left"]] : [[spec.spawn, spec.spawnDir]];
 		this.players.forEach((p, i) => {
 			const [pos, dir] = spawns[i];
 			p.body = this.layBody(pos, dir, 4);
@@ -2600,7 +2609,7 @@ var Game = class Game {
 		}
 		this.rivalRespawn = spec.rival ? 3e3 : Infinity;
 		if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
-		this.spawnPickup("food", Infinity);
+		for (let i = 0; i < this.mode.foods; i++) this.spawnPickup("food", Infinity);
 		if (this.world) {
 			for (const t of treasure) this.spawnPickup(t.kind, Infinity, { ...t.pos });
 			for (let i = 1; i < ENDLESS_FOOD; i++) this.spawnPickup("food", Infinity);
@@ -2682,13 +2691,17 @@ var Game = class Game {
 		return false;
 	}
 	levelSpawnFor(id) {
-		if (this.players.length === 2) return id === 0 ? {
-			x: 4,
-			y: 6
-		} : {
-			x: 19,
-			y: 17
-		};
+		if (this.players.length === 2) {
+			const dx = Math.round(this.w / 6);
+			const dy = Math.round(this.h / 4);
+			return id === 0 ? {
+				x: dx,
+				y: dy
+			} : {
+				x: this.w - 1 - dx,
+				y: this.h - 1 - dy
+			};
+		}
 		return this.spec.spawn;
 	}
 	/** Cell free of everything; optionally at least `minDist` from every snake head. */
