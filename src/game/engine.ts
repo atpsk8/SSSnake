@@ -1411,7 +1411,7 @@ export class Game {
     for (const m of this.mice) m.prev = { ...m.pos };
     if (this.rival) {
       this.rival.prevBody = this.rival.body.map((s) => ({ ...s }));
-      if (this.rival.stunned <= 0) this.stepRival();
+      if (this.rival.stunned <= 0 && !(this.spec.rivalSlow && this.stepCount % 2)) this.stepRival();
     }
     if (this.status !== 'playing') return;
     this.stepMice();
@@ -1630,7 +1630,7 @@ export class Game {
         if (pos) this.arrows.push({ pos, dir: this.rng.pick(DIR_LIST) });
       }
     }
-    this.rivalRespawn = spec.rival ? 3000 : Infinity;
+    this.rivalRespawn = spec.rival ? (spec.rivalSlow ? 6000 : 3000) : Infinity;
     if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
 
     for (let i = 0; i < this.mode.foods; i++) this.spawnPickup('food', Infinity);

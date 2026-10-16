@@ -286,12 +286,14 @@ function arcadeLevel(level, startArena, rng, opts) {
 			if (!modifiers.includes(m)) modifiers.push(m);
 		}
 	}
+	const rookie = level === 3;
 	return {
 		...common,
 		arena,
 		modifiers,
 		randomMines: opts.hazards && level >= 2 ? Math.min(level, 6) : 0,
 		rival: opts.hazards && level >= 3,
+		rivalSlow: rookie,
 		mice: opts.hazards,
 		boss: null,
 		bossTier: 0,
@@ -2419,7 +2421,7 @@ var Game = class Game {
 		for (const m of this.mice) m.prev = { ...m.pos };
 		if (this.rival) {
 			this.rival.prevBody = this.rival.body.map((s) => ({ ...s }));
-			if (this.rival.stunned <= 0) this.stepRival();
+			if (this.rival.stunned <= 0 && !(this.spec.rivalSlow && this.stepCount % 2)) this.stepRival();
 		}
 		if (this.status !== "playing") return;
 		this.stepMice();
@@ -2655,7 +2657,7 @@ var Game = class Game {
 				dir: this.rng.pick(DIR_LIST)
 			});
 		}
-		this.rivalRespawn = spec.rival ? 3e3 : Infinity;
+		this.rivalRespawn = spec.rival ? spec.rivalSlow ? 6e3 : 3e3 : Infinity;
 		if (spec.boss) this.spawnBoss(spec.boss, spec.bossTier);
 		for (let i = 0; i < this.mode.foods; i++) this.spawnPickup("food", Infinity);
 		if (this.world) {

@@ -12,6 +12,8 @@ export interface LevelSpec {
   mines: Vec[];
   randomMines: number;
   rival: boolean;
+  /** The rival moves every other step and arrives later (its first, gentler level). */
+  rivalSlow?: boolean;
   mice: boolean;
   powerUps: boolean;
   boss: BossKind | null;
@@ -100,12 +102,15 @@ export function arcadeLevel(
       if (!modifiers.includes(m)) modifiers.push(m);
     }
   }
+  // Level 3 introduces the rival, so it gets a rookie one: half speed, and it arrives later.
+  const rookie = level === 3;
   return {
     ...common,
     arena,
     modifiers,
     randomMines: opts.hazards && level >= 2 ? Math.min(level, 6) : 0,
     rival: opts.hazards && level >= 3,
+    rivalSlow: rookie,
     mice: opts.hazards,
     boss: null,
     bossTier: 0,
